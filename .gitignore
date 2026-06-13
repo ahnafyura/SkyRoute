@@ -1,0 +1,23 @@
+# 1. Python Byte-compiled / Optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 2. Virtual Environments (JANGAN PERNAH DI-PUSH!)
+venv/
+.venv/
+env/
+.env/
+
+# 3. Environment Variables / Secrets (SANGAT PENTING!)
+.env
+
+# 4. IDE / Editor Workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 5. OS generated files
+.DS_Store
+Thumbs.db
