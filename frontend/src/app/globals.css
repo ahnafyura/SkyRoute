@@ -2,31 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme Variables ─────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f0eef5;
+  --foreground: #1a1820;
+
+  --sky-bg:      #f0eef5;
+  --sky-panel:   #ffffff;
+  --sky-surface: #f8f7fc;
+  --sky-border:  #e2dff0;
+  --sky-accent:  #9b23c8;
+  --sky-cyan:    #0891b2;
+  --sky-text:    #1a1820;
+  --sky-muted:   #6b7280;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.dark {
+  --background: #0a090c;
+  --foreground: #e4e4e7;
+
+  --sky-bg:      #0a090c;
+  --sky-panel:   #1a1820;
+  --sky-surface: #110f15;
+  --sky-border:  #2d2a35;
+  --sky-accent:  #EBA5FA;
+  --sky-cyan:    #06b6d4;
+  --sky-text:    #e4e4e7;
+  --sky-muted:   #71717a;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+/* ── Animations ──────────────────────────────────────────────────────────── */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
-  
+
   .animate-fade-in {
-    animation: fade-in 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: fade-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 }
 
@@ -41,4 +59,84 @@ body {
     transform: translateY(0) scale(1);
     filter: blur(0);
   }
+}
+
+/* Frontier node pulse for algorithm animation */
+@keyframes frontier-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* Route arc glow */
+@keyframes arc-dash {
+  to { stroke-dashoffset: -20; }
+}
+
+/* Airplane trail shimmer */
+@keyframes plane-glow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(235,165,250,0.6)); }
+  50%       { filter: drop-shadow(0 0 10px rgba(235,165,250,1)); }
+}
+
+/* ── Leaflet Custom Styles ───────────────────────────────────────────────── */
+
+/* Reset default Leaflet icon container */
+.airport-custom-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Algorithm animation markers */
+.frontier-node {
+  animation: frontier-pulse 0.9s ease-in-out infinite;
+}
+
+/* Route arc glow effect */
+.route-arc path {
+  filter: drop-shadow(0 0 3px rgba(235, 165, 250, 0.7));
+}
+
+.route-arc-recalc path {
+  filter: drop-shadow(0 0 3px rgba(249, 115, 22, 0.7));
+}
+
+/* Distance label chips */
+.distance-label-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.distance-chip {
+  background: rgba(26, 24, 32, 0.85);
+  border: 1px solid rgba(45, 42, 53, 0.8);
+  color: #71717a;
+  font-family: monospace;
+  font-size: 8px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+.light .distance-chip {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(226, 223, 240, 0.9);
+  color: #6b7280;
+}
+
+/* K-shortest alternate arcs */
+.route-alt-1 path {
+  filter: drop-shadow(0 0 2px rgba(6, 182, 212, 0.4));
+}
+
+.route-alt-2 path {
+  filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.4));
+}
+
+/* Airplane marker */
+.airplane-icon {
+  background: transparent !important;
+  border: none !important;
+  animation: plane-glow 2s ease-in-out infinite;
 }

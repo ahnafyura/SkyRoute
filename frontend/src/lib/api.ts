@@ -93,7 +93,7 @@ export async function postRoute(req: RouteRequest): Promise<RouteResponse> {
     }
 
     return await res.json() as RouteResponse;
-  } catch (error) {
+  } catch {
     throw new Error("NETWORK ERROR: Failed to communicate with pathfinding backend engine. Check server status.");
   }
 }

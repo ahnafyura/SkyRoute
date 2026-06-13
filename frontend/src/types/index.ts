@@ -53,8 +53,25 @@ export interface RouteResponse {
   recalculated:   boolean;
 }
 
+export type AlgoType = "dijkstra" | "astar" | "bidir";
+
 export interface RouteRequest {
   origin:      string;
   destination: string;
-  algo:        "dijkstra" | "astar";
+  algo:        AlgoType;
+}
+
+export interface AlgorithmStep {
+  type:          "explore" | "settle" | "update_dist";
+  node:          string;
+  distanceSoFar: number;
+  frontier:      string[];
+  settled:       string[];
+}
+
+export interface AlgorithmResult extends RouteResponse {
+  steps:         AlgorithmStep[];
+  nodesExplored: number;
+  timeMs:        number;
+  algo:          AlgoType;
 }

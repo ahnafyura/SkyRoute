@@ -1,27 +1,36 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
+import { AnimatePresence, motion } from "framer-motion";
 
 import type {
   AirportNode,
   GraphEdge,
+  GraphData,
   NfzZone,
   RouteResponse,
+  AlgoType,
+  AlgorithmStep,
 } from "@/types";
+import type { AlgorithmResult } from "@/lib/algorithms";
 import {
-  fetchGraph,
-  fetchNfz,
-  postRoute,
-  toggleNfz,
-} from "@/lib/api";
+  computeRoute,
+  yenKShortest,
+  computeBlockedEdges,
+} from "@/lib/algorithms";
+import { toggleNfz } from "@/lib/api";
 
 import ControlPanel from "@/components/ControlPanel";
 import ResultPanel from "@/components/ResultPanel";
 import TelemetryWorkspace from "@/components/TelemetryWorkspace";
+import SysStatusWorkspace from "@/components/SysStatusWorkspace";
+import LogsWorkspace from "@/components/LogsWorkspace";
+import SettingsModal from "@/components/SettingsModal";
+import HelpModal from "@/components/HelpModal";
+import ThemeToggle from "@/components/ThemeToggle";
 
-// Leaflet requires `window` — dynamically import MapView with SSR disabled
 const MapView = dynamic(() => import("@/components/MapView"), {
   ssr: false,
   loading: () => (
@@ -33,10 +42,11 @@ const MapView = dynamic(() => import("@/components/MapView"), {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#0a090c",
-        color: "#9CA3AF",
+        background: "var(--sky-bg)",
+        color: "var(--sky-muted)",
         fontFamily: "monospace",
         fontSize: "12px",
+        letterSpacing: "0.1em",
       }}
     >
       [SYSTEM] INITIALIZING_RADAR...
@@ -44,160 +54,242 @@ const MapView = dynamic(() => import("@/components/MapView"), {
   ),
 });
 
-export default function Home() {
+type TabType = "ROUTE_PLAN" | "FLEET_ALT" | "SYS_STATUS" | "LOGS";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DashboardContent() {
   const router = useRouter();
 
-  // ---------------------------------------------------------------------------
-  // §3.1 — Static data (loaded once on mount)
-  // ---------------------------------------------------------------------------
+  // ── Static graph data ──
   const [airports, setAirports] = useState<AirportNode[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [nfzZones, setNfzZones] = useState<NfzZone[]>([]);
 
-  // ---------------------------------------------------------------------------
-  // §3.1 — User input
-  // ---------------------------------------------------------------------------
+  // ── User input ──
   const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null);
   const [selectedDest, setSelectedDest] = useState<string | null>(null);
-  const [selectedAlgo, setSelectedAlgo] = useState<"dijkstra" | "astar">(
-    "dijkstra"
-  );
+  const [selectedAlgo, setSelectedAlgo] = useState<AlgoType>("dijkstra");
+  const [animateExploration, setAnimateExploration] = useState(true);
 
-  // ---------------------------------------------------------------------------
-  // §3.1 — Routing result
-  // ---------------------------------------------------------------------------
-  const [currentPath, setCurrentPath] = useState<RouteResponse | null>(null);
+  // ── Routing result ──
+  const [currentPath, setCurrentPath] = useState<AlgorithmResult | null>(null);
+  const [kPaths, setKPaths] = useState<Array<{ path: string[]; cost: number }>>([]);
   const [logs, setLogs] = useState<string[]>([]);
 
-  // ---------------------------------------------------------------------------
-  // §3.1 — UI state
-  // ---------------------------------------------------------------------------
-  const [activeTab, setActiveTab] = useState<"ROUTE_PLAN" | "FLEET_ALT">("ROUTE_PLAN");
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  // ── Animation state ──
+  const [animationSteps, setAnimationSteps] = useState<AlgorithmStep[]>([]);
+  const [isAnimating, setIsAnimating] = useState(false);
 
-  // ---------------------------------------------------------------------------
-  // §3.2 — URL Query Sync
-  // ---------------------------------------------------------------------------
+  // ── UI state ──
+  const [activeTab, setActiveTab] = useState<TabType>("ROUTE_PLAN");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // ── URL Query Sync ──
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-
   useEffect(() => {
-    if (tabParam === "ROUTE_PLAN" || tabParam === "FLEET_ALT") {
-      setActiveTab(tabParam);
+    if (
+      tabParam === "ROUTE_PLAN" ||
+      tabParam === "FLEET_ALT" ||
+      tabParam === "SYS_STATUS" ||
+      tabParam === "LOGS"
+    ) {
+      setActiveTab(tabParam as TabType);
     }
   }, [tabParam]);
 
-  // ---------------------------------------------------------------------------
-  // Data loading — runs once on mount
-  // ---------------------------------------------------------------------------
+  // ── Load graph + NFZ data on mount ──
   useEffect(() => {
     async function loadData() {
       try {
-        const [graphData, nfzData] = await Promise.all([
-          fetchGraph(),
-          fetchNfz(),
+        const [gd, nfzRaw] = await Promise.all([
+          fetch("/data/graph.json").then((r) => r.json() as Promise<GraphData>),
+          fetch("/data/nfz.json").then((r) =>
+            r.json() as Promise<{ nfz_zones: NfzZone[] }>
+          ),
         ]);
-        setAirports(graphData.nodes);
-        setGraphEdges(graphData.edges);
-        setNfzZones(nfzData.nfz_zones);
+        setAirports(gd.nodes);
+        setGraphEdges(gd.edges);
+        setGraphData(gd);
+        setNfzZones(nfzRaw.nfz_zones);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to load initial data."
+          err instanceof Error ? err.message : "Failed to load network data."
         );
       }
     }
     loadData();
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // §3.2 — Clear route when origin or destination changes
-  // ---------------------------------------------------------------------------
+  // ── Clear route on input change ──
   useEffect(() => {
     setCurrentPath(null);
-    setLogs([]);
+    setKPaths([]);
+    setAnimationSteps([]);
+    setIsAnimating(false);
   }, [selectedOrigin, selectedDest]);
 
-  // ---------------------------------------------------------------------------
-  // Handlers
-  // ---------------------------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────────────
+  // Route calculation
+  // ─────────────────────────────────────────────────────────────────────────
 
-  /** Request route calculation via API layer */
   const handleFindRoute = useCallback(async () => {
-    if (!selectedOrigin || !selectedDest) return;
+    if (!selectedOrigin || !selectedDest || !graphData) return;
 
     if (selectedOrigin === selectedDest) {
-      setCurrentPath(null);
       const ts = new Date().toISOString().substring(11, 19);
-      setLogs((prev) => [...prev, `[${ts}] ERROR: Departure point and destination cannot be identical.`]);
+      setLogs((p) => [
+        ...p,
+        `[${ts}] ERROR: Departure and destination cannot be identical.`,
+      ]);
       return;
     }
 
     setIsLoading(true);
     setError(null);
-    const tsStart = new Date().toISOString().substring(11, 19);
-    setLogs((prev) => [
-      ...prev,
-      `[${tsStart}] TRAFFIC_ADVISORY: Checking active airspace constraints for ${selectedOrigin} → ${selectedDest}`,
-      `[${tsStart}] VECTOR_CALCULATION: Phase 1 complete. Algorithm: ${selectedAlgo.toUpperCase()}`,
+    setIsAnimating(false);
+    setAnimationSteps([]);
+
+    const ts0 = new Date().toISOString().substring(11, 19);
+    setLogs((p) => [
+      ...p,
+      `[${ts0}] TRAFFIC_ADVISORY: Checking constraints for ${selectedOrigin} → ${selectedDest}`,
+      `[${ts0}] VECTOR_CALC: Running ${selectedAlgo.toUpperCase()} on ${airports.length} nodes`,
     ]);
 
+    await new Promise((r) => setTimeout(r, 12));
+
     try {
-      const result = await postRoute({
+      const result = computeRoute({
         origin: selectedOrigin,
         destination: selectedDest,
         algo: selectedAlgo,
+        graphData,
+        nfzZones,
+        trackSteps: animateExploration,
       });
+
       setCurrentPath(result);
-      const tsEnd = new Date().toISOString().substring(11, 19);
-      setLogs((prev) => [...prev, `[${tsEnd}] VECTOR_CALCULATION: Path resolved. Distance: ${result.total_distance.toFixed(2)} km.`]);
+
+      const ts1 = new Date().toISOString().substring(11, 19);
+      setLogs((p) => [
+        ...p,
+        `[${ts1}] PATH_RESOLVED: ${result.path.join(" → ")} // ${result.total_distance.toFixed(0)} km // ${result.nodesExplored} nodes // ${result.timeMs}ms`,
+      ]);
+
+      if (animateExploration && result.steps.length > 0) {
+        setAnimationSteps(result.steps);
+        setIsAnimating(true);
+        const dur = result.steps.length * 75 + 500;
+        setTimeout(() => setIsAnimating(false), dur);
+      }
+
+      try {
+        const { masked } = computeBlockedEdges(
+          graphData.edges,
+          graphData.nodes,
+          nfzZones.filter((z) => z.active)
+        );
+        const kResults = yenKShortest(
+          graphData.nodes,
+          graphData.edges,
+          masked,
+          selectedOrigin,
+          selectedDest,
+          3
+        );
+        setKPaths(kResults);
+      } catch {
+        // K-shortest is non-critical
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Route calculation failed.";
       setError(msg);
-      const tsError = new Date().toISOString().substring(11, 19);
-      const prefix = msg.startsWith("NETWORK") ? "" : "ERROR: ";
-      setLogs((prev) => [...prev, `[${tsError}] ${prefix}${msg}`]);
+      const ts2 = new Date().toISOString().substring(11, 19);
+      setLogs((p) => [...p, `[${ts2}] ERROR: ${msg}`]);
       setCurrentPath(null);
     } finally {
       setIsLoading(false);
     }
-  }, [selectedOrigin, selectedDest, selectedAlgo]);
+  }, [
+    selectedOrigin,
+    selectedDest,
+    selectedAlgo,
+    graphData,
+    nfzZones,
+    airports.length,
+    animateExploration,
+  ]);
 
-  /** Toggle an NFZ zone — recalculates route if one is active */
+  // ─────────────────────────────────────────────────────────────────────────
+  // NFZ toggle — recalculate live route
+  // ─────────────────────────────────────────────────────────────────────────
+
   const handleToggleNfz = useCallback(
     async (id: string, active: boolean) => {
-      // Optimistically update local state
-      setNfzZones((prev) =>
-        prev.map((z) => (z.id === id ? { ...z, active } : z))
+      const updatedZones = nfzZones.map((z) =>
+        z.id === id ? { ...z, active } : z
       );
+      setNfzZones(updatedZones);
+      await toggleNfz(id, active);
 
-      try {
-        await toggleNfz(id, active);
-
-        // If a route is currently displayed, recalculate it
-        if (currentPath && selectedOrigin && selectedDest) {
-          setIsRecalculating(true);
-          const newRoute = await postRoute({
+      if (currentPath && selectedOrigin && selectedDest && graphData) {
+        setIsRecalculating(true);
+        await new Promise((r) => setTimeout(r, 12));
+        try {
+          const newRoute = computeRoute({
             origin: selectedOrigin,
             destination: selectedDest,
             algo: selectedAlgo,
+            graphData,
+            nfzZones: updatedZones,
+            trackSteps: false,
           });
           setCurrentPath(newRoute);
+          const ts = new Date().toISOString().substring(11, 19);
+          setLogs((p) => [
+            ...p,
+            `[${ts}] NFZ_RECALC: ${id} (${active ? "activated" : "deactivated"}) → ${newRoute.path.join(" → ")}`,
+          ]);
+          try {
+            const { masked } = computeBlockedEdges(
+              graphData.edges,
+              graphData.nodes,
+              updatedZones.filter((z) => z.active)
+            );
+            const kResults = yenKShortest(
+              graphData.nodes,
+              graphData.edges,
+              masked,
+              selectedOrigin,
+              selectedDest,
+              3
+            );
+            setKPaths(kResults);
+          } catch { /* silent */ }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "NFZ recalculation failed.";
+          setError(msg);
+        } finally {
           setIsRecalculating(false);
         }
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "NFZ toggle failed."
-        );
-        setIsRecalculating(false);
       }
     },
-    [currentPath, selectedOrigin, selectedDest, selectedAlgo]
+    [currentPath, selectedOrigin, selectedDest, selectedAlgo, graphData, nfzZones]
   );
 
-  /** Select airport from map marker click */
+  // ─────────────────────────────────────────────────────────────────────────
+  // Map click — select airports
+  // ─────────────────────────────────────────────────────────────────────────
+
   const handleSelectAirport = useCallback(
     (iata: string) => {
       if (!selectedOrigin) {
@@ -205,206 +297,344 @@ export default function Home() {
       } else if (!selectedDest && iata !== selectedOrigin) {
         setSelectedDest(iata);
       } else if (iata !== selectedDest) {
-        // Replace origin if both are already set
         setSelectedOrigin(iata);
+        setSelectedDest(null);
       }
     },
     [selectedOrigin, selectedDest]
   );
 
-  // ---------------------------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────────────
+  // Sidebar nav items
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const NAV_ITEMS: { icon: string; label: string; tab: TabType }[] = [
+    { icon: "📊", label: "SYS_STATUS", tab: "SYS_STATUS" },
+    { icon: "🗺️", label: "ROUTE_PLAN", tab: "ROUTE_PLAN" },
+    { icon: "✈️", label: "FLEET_ALT", tab: "FLEET_ALT" },
+    { icon: "›_", label: "LOGS", tab: "LOGS" },
+  ];
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Render
-  // ---------------------------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────────────
+
   return (
-    <div className="animate-fade-in flex flex-col h-screen bg-[#110f15] text-zinc-400 font-mono overflow-hidden">
+    <div className="animate-fade-in flex flex-col h-screen bg-sky-bg text-sky-muted font-mono overflow-hidden">
+      {/* ── Settings & Help modals ── */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        defaultAlgo={selectedAlgo}
+        onChangeAlgo={setSelectedAlgo}
+        animateExploration={animateExploration}
+        onChangeAnimate={setAnimateExploration}
+      />
+      <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
       {/* ── Top Header ── */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[#2d2a35] bg-[#1a1820]">
+      <header className="flex items-center justify-between px-6 py-3 border-b border-sky-border bg-sky-panel shrink-0">
         <div className="flex items-center gap-8">
-          <div className="text-3xl font-black tracking-widest text-[#EBA5FA] drop-shadow-[0_0_8px_rgba(235,165,250,0.5)]">
-            AERO_OS_V3.0
+          <div className="text-2xl font-black tracking-widest text-sky-accent drop-shadow-[0_0_8px_rgba(235,165,250,0.5)]">
+            AERO_OS
           </div>
-          <nav className="hidden md:flex gap-6 text-xs tracking-widest font-semibold ml-4">
-            <span className="flex items-center gap-2 px-3 py-1 bg-zinc-800/50 rounded text-zinc-300 border border-zinc-700/50">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+          <nav className="hidden md:flex gap-5 text-[11px] tracking-widest font-semibold">
+            <span className="flex items-center gap-2 px-3 py-1 bg-sky-surface rounded text-sky-text border border-sky-border">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-cyan animate-pulse" />
               NETWORK: ACTIVE
             </span>
-            <span 
+            <span
               onClick={() => router.push("/")}
-              className="flex items-center gap-2 hover:text-zinc-200 cursor-pointer transition-colors"
+              className="flex items-center gap-2 hover:text-sky-text cursor-pointer transition-colors"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
               </svg>
               HOME
             </span>
-            <span className="flex items-center gap-2 hover:text-zinc-200 cursor-pointer transition-colors">
-              FLIGHT
-            </span>
-            <span 
-              onClick={() => setActiveTab("ROUTE_PLAN")}
-              className={`flex items-center gap-2 cursor-pointer transition-colors ${
-                activeTab === "ROUTE_PLAN" ? "text-[#EBA5FA] border-b-2 border-[#EBA5FA] pb-1" : "hover:text-zinc-200"
-              }`}
-            >
-              RADAR
-            </span>
-            <span 
-              onClick={() => setActiveTab("FLEET_ALT")}
-              className={`flex items-center gap-2 cursor-pointer transition-colors ${
-                activeTab === "FLEET_ALT" ? "text-[#EBA5FA] border-b-2 border-[#EBA5FA] pb-1" : "hover:text-zinc-200"
-              }`}
-            >
-              TELEMETRY
-            </span>
-            <span className="flex items-center gap-2 hover:text-zinc-200 cursor-pointer transition-colors">
-              COMMS
-            </span>
+            {NAV_ITEMS.map(({ label, tab }) => (
+              <span
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`cursor-pointer transition-colors ${
+                  activeTab === tab
+                    ? "text-sky-accent border-b-2 border-sky-accent pb-1"
+                    : "hover:text-sky-text"
+                }`}
+              >
+                {label}
+              </span>
+            ))}
           </nav>
         </div>
-        <div className="flex items-center gap-4 text-zinc-500">
-          <svg className="w-5 h-5 cursor-pointer hover:text-zinc-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-          <svg className="w-5 h-5 cursor-pointer hover:text-zinc-300 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <div className="w-8 h-8 rounded-full border border-zinc-600 bg-zinc-800 flex items-center justify-center overflow-hidden cursor-pointer">
-            <svg className="w-5 h-5 text-zinc-500" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+
+        <div className="flex items-center gap-3 text-sky-muted">
+          <ThemeToggle />
+          <button
+            onClick={() => setShowHelp(true)}
+            className="w-8 h-8 rounded-full border border-sky-border bg-sky-surface flex items-center justify-center cursor-pointer hover:border-sky-muted hover:text-sky-text transition-colors text-[11px] font-bold"
+            title="Help"
+          >
+            ?
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-8 h-8 rounded-full border border-sky-border bg-sky-surface flex items-center justify-center cursor-pointer hover:border-sky-muted hover:text-sky-text transition-colors"
+            title="Settings"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
             </svg>
-          </div>
+          </button>
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left Sidebar ── */}
-        <aside className="w-64 border-r border-[#2d2a35] bg-[#1a1820] flex flex-col justify-between py-6">
+        <aside className="w-56 border-r border-sky-border bg-sky-panel flex flex-col justify-between py-5 shrink-0">
           <div>
-            <h2 className="text-[#EBA5FA] text-2xl font-bold px-6 tracking-widest drop-shadow-[0_0_4px_rgba(235,165,250,0.5)]">
+            <h2 className="text-sky-accent text-xl font-bold px-5 tracking-widest drop-shadow-[0_0_4px_rgba(235,165,250,0.4)]">
               OPERATIONS
             </h2>
-            <p className="text-xs text-zinc-500 px-6 mt-1 tracking-[0.2em] mb-8">
+            <p className="text-[10px] text-sky-muted px-5 mt-0.5 tracking-[0.2em] mb-6">
               SECTOR_7G
             </p>
-            <nav className="flex flex-col text-sm tracking-widest text-zinc-400">
-              <div className="px-6 py-3 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-3 transition-colors">
-                <span className="opacity-60 text-lg">📊</span> SYS_STATUS
-              </div>
-              <div
-                onClick={() => setActiveTab('ROUTE_PLAN')}
-                className={`px-6 py-3 cursor-pointer flex items-center gap-3 transition-colors ${activeTab === 'ROUTE_PLAN' ? 'bg-zinc-800/80 border-l-4 border-[#EBA5FA] text-zinc-200' : 'hover:bg-zinc-800/50 text-zinc-400'}`}
-              >
-                <span className={`text-lg ${activeTab === 'ROUTE_PLAN' ? 'opacity-80' : 'opacity-60'}`}>🗺️</span> ROUTE_PLAN
-              </div>
-              <div
-                onClick={() => setActiveTab('FLEET_ALT')}
-                className={`px-6 py-3 cursor-pointer flex items-center gap-3 transition-colors ${activeTab === 'FLEET_ALT' ? 'bg-zinc-800/80 border-l-4 border-[#EBA5FA] text-zinc-200' : 'hover:bg-zinc-800/50 text-zinc-400'}`}
-              >
-                <span className={`text-lg ${activeTab === 'FLEET_ALT' ? 'opacity-80' : 'opacity-60'}`}>✈️</span> FLEET_ALT
-              </div>
-              <div className="px-6 py-3 hover:bg-zinc-800/50 cursor-pointer flex items-center gap-3 transition-colors">
-                <span className="opacity-60 text-lg">›_</span> LOGS
-              </div>
+            <nav className="flex flex-col text-[11px] tracking-widest text-sky-muted">
+              {NAV_ITEMS.map(({ icon, label, tab }) => (
+                <motion.div
+                  key={label}
+                  whileHover={{ x: 3 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-5 py-2.5 cursor-pointer flex items-center gap-3 transition-colors ${
+                    activeTab === tab
+                      ? "bg-sky-surface border-l-4 border-sky-accent text-sky-text"
+                      : "hover:bg-sky-surface text-sky-muted"
+                  }`}
+                >
+                  <span className="text-base opacity-70">{icon}</span>
+                  {label}
+                </motion.div>
+              ))}
             </nav>
           </div>
-          <div className="px-6">
-            <button
+
+          <div className="px-5">
+            <motion.button
+              whileTap={{ scale: 0.97 }}
               onClick={handleFindRoute}
-              className="w-full py-3 bg-[#EBA5FA] text-zinc-900 font-bold tracking-widest rounded text-xs hover:bg-[#f1bcfd] transition-colors"
+              disabled={!selectedOrigin || !selectedDest || isLoading}
+              className="w-full py-2.5 bg-sky-accent text-white font-bold tracking-widest rounded text-[11px] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
             >
               INIT_SEQUENCE
-            </button>
-            <div className="mt-4 flex flex-col gap-2 text-xs tracking-widest text-zinc-500">
-              <span className="cursor-pointer hover:text-zinc-300 transition-colors flex items-center gap-2">
+            </motion.button>
+            <div className="mt-3 flex flex-col gap-2 text-[11px] tracking-widest text-sky-muted">
+              <motion.span
+                whileHover={{ x: 2 }}
+                transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                onClick={() => setShowSettings(true)}
+                className="cursor-pointer hover:text-sky-text transition-colors flex items-center gap-2"
+              >
                 ⚙️ SETTINGS
-              </span>
-              <span className="cursor-pointer hover:text-zinc-300 transition-colors flex items-center gap-2">
+              </motion.span>
+              <motion.span
+                whileHover={{ x: 2 }}
+                transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                onClick={() => setShowHelp(true)}
+                className="cursor-pointer hover:text-sky-text transition-colors flex items-center gap-2"
+              >
                 ❓ HELP
-              </span>
+              </motion.span>
             </div>
           </div>
         </aside>
 
-        {/* ── Dynamic Workspace Area ── */}
-        {activeTab === "ROUTE_PLAN" ? (
-          <>
-            {/* ── Center Area ── */}
-            <section className="flex flex-col flex-1 p-4 bg-[#0a090c] gap-4 relative">
-          <div className="flex-1 border border-[#2d2a35] rounded-lg overflow-hidden relative">
-            <MapView
-              airports={airports}
-              nfzZones={nfzZones}
-              activeRoute={currentPath}
-              selectedOrigin={selectedOrigin}
-              selectedDest={selectedDest}
-              onSelectAirport={handleSelectAirport}
-            />
-            {/* Overlay Info Panel */}
-            <div className="absolute top-4 left-4 border border-[#2d2a35] bg-[#1a1820]/90 p-4 text-xs tracking-widest z-[1000] rounded w-64 shadow-xl pointer-events-none">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-zinc-500">ACTIVE VECTOR</span>
-                <span className="text-cyan-400">v3.44.0</span>
-              </div>
-              <div className="h-px w-full bg-[#2d2a35] mb-2"></div>
-              <div className="flex justify-between items-center text-[10px]">
-                <span className="text-zinc-500">COORD_X</span>
-                <span className="text-cyan-400">142.029</span>
-              </div>
-              <div className="flex justify-between items-center text-[10px]">
-                <span className="text-zinc-500">COORD_Y</span>
-                <span className="text-cyan-400">-34.112</span>
-              </div>
-            </div>
-          </div>
+        {/* ── Dynamic Workspace ── */}
+        <AnimatePresence mode="wait">
+          {activeTab === "ROUTE_PLAN" && (
+            <motion.div
+              key="route"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-1 overflow-hidden"
+            >
+              {/* Center Map Area */}
+              <section className="flex flex-col flex-1 p-3 bg-sky-bg gap-3 overflow-hidden">
+                <div
+                  className="flex-1 border border-sky-border rounded-lg overflow-hidden relative"
+                  style={{ minHeight: 0 }}
+                >
+                  <MapView
+                    airports={airports}
+                    graphEdges={graphEdges}
+                    nfzZones={nfzZones}
+                    activeRoute={currentPath as RouteResponse | null}
+                    selectedOrigin={selectedOrigin}
+                    selectedDest={selectedDest}
+                    onSelectAirport={handleSelectAirport}
+                    animationSteps={animationSteps}
+                    isAnimating={isAnimating}
+                    kShortestPaths={kPaths}
+                  />
 
-          <div className="h-48 border border-[#2d2a35] bg-[#1a1820] rounded-lg flex flex-col overflow-hidden">
-            <div className="flex items-center px-4 py-2 border-b border-[#2d2a35] gap-4 text-xs">
-              <div className="w-2 h-2 rounded-full bg-[#EBA5FA] animate-pulse"></div>
-              <span className="tracking-widest text-[#EBA5FA] font-bold border-b-2 border-[#EBA5FA] py-1">
-                SYSTEM_EVENT_LOG.STREAM
-              </span>
-              <span className="ml-auto text-zinc-600 tracking-widest">
-                UTF-8 // SECTOR_7G
-              </span>
-            </div>
-            <div className="flex-1 p-4 overflow-y-auto bg-[#0a090c] shadow-inner">
-              <ResultPanel
-                currentPath={currentPath}
-                isLoading={isLoading}
-                isRecalculating={isRecalculating}
-                logs={logs}
-              />
-            </div>
-          </div>
-        </section>
+                  {/* Overlay info panel */}
+                  <div className="absolute top-3 left-3 border border-sky-border bg-sky-panel/90 p-3 text-[10px] tracking-widest z-[1000] rounded w-56 shadow-xl pointer-events-none backdrop-blur-sm">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-sky-muted">ACTIVE VECTOR</span>
+                      <span className="text-sky-cyan">v3.44.0</span>
+                    </div>
+                    <div className="h-px w-full bg-sky-border mb-1.5" />
+                    <div className="flex justify-between items-center">
+                      <span className="text-sky-muted">NODES</span>
+                      <span className="text-sky-cyan">{airports.length}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sky-muted">ALGO</span>
+                      <span className="text-sky-cyan">{selectedAlgo.toUpperCase()}</span>
+                    </div>
+                    {currentPath && (
+                      <div className="flex justify-between items-center mt-1 pt-1 border-t border-sky-border">
+                        <span className="text-sky-muted">EXPLORED</span>
+                        <span className="text-sky-accent">{currentPath.nodesExplored} nodes</span>
+                      </div>
+                    )}
+                  </div>
 
-        {/* ── Right Sidebar ── */}
-        <aside className="w-[340px] border-l border-[#2d2a35] bg-[#1a1820] flex flex-col p-6 overflow-y-auto">
-          {error && (
-            <div className="bg-red-950/50 border border-red-500/50 text-red-400 px-4 py-3 rounded text-xs tracking-widest mb-6 break-words">
-              [ERROR] {error}
-            </div>
+                  {/* K-Shortest legend */}
+                  {kPaths.length > 1 && !isAnimating && (
+                    <div className="absolute bottom-3 left-3 border border-sky-border bg-sky-panel/90 p-2 text-[9px] tracking-widest z-[1000] rounded shadow-xl pointer-events-none backdrop-blur-sm flex flex-col gap-1">
+                      <span className="text-sky-muted">K-SHORTEST PATHS</span>
+                      {kPaths.map((kp, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-0.5 rounded"
+                            style={{
+                              background:
+                                i === 0
+                                  ? "var(--sky-accent)"
+                                  : i === 1
+                                  ? "var(--sky-cyan)"
+                                  : "#F97316",
+                              opacity: i === 0 ? 1 : 0.5,
+                            }}
+                          />
+                          <span className={i === 0 ? "text-sky-accent" : "text-sky-muted"}>
+                            {Math.round(kp.cost)} km
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* System Event Log */}
+                <div className="h-36 border border-sky-border bg-sky-panel rounded-lg flex flex-col overflow-hidden shrink-0">
+                  <div className="flex items-center px-4 py-1.5 border-b border-sky-border gap-3 text-[10px] shrink-0">
+                    <div className="w-1.5 h-1.5 rounded-full bg-sky-accent animate-pulse" />
+                    <span className="tracking-widest text-sky-accent font-bold border-b-2 border-sky-accent pb-0.5">
+                      SYSTEM_EVENT_LOG
+                    </span>
+                    <span className="ml-auto text-sky-muted tracking-widest">
+                      UTF-8 // SECTOR_7G
+                    </span>
+                  </div>
+                  <div className="flex-1 p-3 overflow-y-auto bg-sky-bg">
+                    <ResultPanel
+                      currentPath={currentPath}
+                      isLoading={isLoading}
+                      isRecalculating={isRecalculating}
+                      logs={logs}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* Right Sidebar */}
+              <aside className="w-[320px] border-l border-sky-border bg-sky-panel flex flex-col p-5 overflow-y-auto shrink-0">
+                {error && (
+                  <div className="bg-red-950/30 border border-red-500/40 text-red-400 px-3 py-2 rounded text-[10px] tracking-widest mb-5 break-words">
+                    [ERROR] {error}
+                  </div>
+                )}
+                <ControlPanel
+                  airports={airports}
+                  nfzZones={nfzZones}
+                  selectedOrigin={selectedOrigin}
+                  selectedDest={selectedDest}
+                  selectedAlgo={selectedAlgo}
+                  isLoading={isLoading}
+                  animateExploration={animateExploration}
+                  onSelectOrigin={setSelectedOrigin}
+                  onSelectDest={setSelectedDest}
+                  onSelectAlgo={setSelectedAlgo}
+                  onToggleNfz={handleToggleNfz}
+                  onFindRoute={handleFindRoute}
+                  onToggleAnimate={setAnimateExploration}
+                />
+              </aside>
+            </motion.div>
           )}
-          <ControlPanel
-            airports={airports}
-            nfzZones={nfzZones}
-            selectedOrigin={selectedOrigin}
-            selectedDest={selectedDest}
-            selectedAlgo={selectedAlgo}
-            isLoading={isLoading}
-            onSelectOrigin={setSelectedOrigin}
-            onSelectDest={setSelectedDest}
-            onSelectAlgo={setSelectedAlgo}
-            onToggleNfz={handleToggleNfz}
-            onFindRoute={handleFindRoute}
-          />
-        </aside>
-          </>
-        ) : (
-          <TelemetryWorkspace />
-        )}
+
+          {activeTab === "FLEET_ALT" && (
+            <motion.div
+              key="fleet"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-1 overflow-hidden"
+            >
+              <TelemetryWorkspace
+                currentPath={currentPath}
+                airports={airports}
+                graphEdges={graphEdges}
+                nfzZones={nfzZones}
+              />
+            </motion.div>
+          )}
+
+          {activeTab === "SYS_STATUS" && (
+            <motion.div
+              key="sys"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-1 overflow-hidden"
+            >
+              <SysStatusWorkspace
+                airports={airports}
+                graphEdges={graphEdges}
+                nfzZones={nfzZones}
+                currentPath={currentPath}
+              />
+            </motion.div>
+          )}
+
+          {activeTab === "LOGS" && (
+            <motion.div
+              key="logs"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-1 overflow-hidden"
+            >
+              <LogsWorkspace logs={logs} onClear={() => setLogs([])} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardContent />
+    </Suspense>
   );
 }
