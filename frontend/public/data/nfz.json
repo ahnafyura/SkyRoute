@@ -1,0 +1,51 @@
+{
+  "nfz_zones": [
+    {
+      "id": "nfz-java-sea-01",
+      "name": "Java Sea Military Exercise Zone",
+      "type": "polygon",
+      "active": true,
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [110.0, -6.0],
+            [112.0, -6.0],
+            [112.0, -7.0],
+            [110.0, -7.0],
+            [110.0, -6.0]
+          ]
+        ]
+      }
+    },
+    {
+      "id": "nfz-bali-strait-01",
+      "name": "Bali Strait Restricted Area",
+      "type": "polygon",
+      "active": false,
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [114.0, -8.0],
+            [115.0, -8.0],
+            [115.0, -8.8],
+            [114.0, -8.8],
+            [114.0, -8.0]
+          ]
+        ]
+      }
+    },
+    {
+      "id": "nfz-makassar-circle-01",
+      "name": "Makassar Volcanic Ash Zone",
+      "type": "circle",
+      "active": false,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [119.8, -5.3],
+        "radius_km": 80
+      }
+    }
+  ]
+}
