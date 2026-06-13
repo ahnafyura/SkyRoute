@@ -36,7 +36,7 @@ const MapView = dynamic(() => import("@/components/MapView"), {
     <div
       className="w-full h-full flex items-center justify-center"
       style={{
-        minHeight: "400px",
+        minHeight: "300px",
         background: "var(--surface-container-low)",
         color: "var(--outline)",
         fontFamily: "JetBrains Mono, monospace",
@@ -51,30 +51,27 @@ const MapView = dynamic(() => import("@/components/MapView"), {
 
 type TabType = "ROUTE_PLAN" | "FLEET_ALT" | "SYS_STATUS" | "LOGS";
 
-// ─── Sidebar nav config ───────────────────────────────────────────────────────
 const NAV_ITEMS: { icon: string; label: string; tab: TabType }[] = [
-  { icon: "map",                      label: "Peta Rute",      tab: "ROUTE_PLAN" },
-  { icon: "flight",                   label: "Telemetri",      tab: "FLEET_ALT"  },
-  { icon: "query_stats",              label: "Status Jaringan",tab: "SYS_STATUS" },
-  { icon: "terminal",                 label: "Log Aktivitas",  tab: "LOGS"       },
+  { icon: "map",          label: "Peta Rute",      tab: "ROUTE_PLAN" },
+  { icon: "flight",       label: "Telemetri",      tab: "FLEET_ALT"  },
+  { icon: "query_stats",  label: "Status Jaringan", tab: "SYS_STATUS" },
+  { icon: "terminal",     label: "Log Aktivitas",  tab: "LOGS"       },
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dashboard Content
 // ─────────────────────────────────────────────────────────────────────────────
 function DashboardContent() {
   const router = useRouter();
 
   // ── Graph data ──
-  const [airports, setAirports] = useState<AirportNode[]>([]);
+  const [airports, setAirports]     = useState<AirportNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [nfzZones, setNfzZones] = useState<NfzZone[]>([]);
+  const [graphData, setGraphData]   = useState<GraphData | null>(null);
+  const [nfzZones, setNfzZones]     = useState<NfzZone[]>([]);
 
   // ── User input ──
   const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null);
-  const [selectedDest, setSelectedDest] = useState<string | null>(null);
-  const [selectedAlgo, setSelectedAlgo] = useState<AlgoType>("dijkstra");
+  const [selectedDest,   setSelectedDest]   = useState<string | null>(null);
+  const [selectedAlgo,   setSelectedAlgo]   = useState<AlgoType>("dijkstra");
   const [animateExploration, setAnimateExploration] = useState(true);
 
   // ── Routing result ──
@@ -87,12 +84,35 @@ function DashboardContent() {
   const [isAnimating, setIsAnimating] = useState(false);
 
   // ── UI state ──
-  const [activeTab, setActiveTab] = useState<TabType>("ROUTE_PLAN");
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRecalculating, setIsRecalculating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
+  const [activeTab,          setActiveTab]          = useState<TabType>("ROUTE_PLAN");
+  const [isLoading,          setIsLoading]          = useState(false);
+  const [isRecalculating,    setIsRecalculating]    = useState(false);
+  const [error,              setError]              = useState<string | null>(null);
+  const [showSettings,       setShowSettings]       = useState(false);
+  const [showHelp,           setShowHelp]           = useState(false);
+  const [showNotifications,  setShowNotifications]  = useState(false);
+
+  // ── Mobile / responsive ──
+  const [isMobile,            setIsMobile]            = useState(false);
+  const [sidebarOpen,         setSidebarOpen]         = useState(false);
+  const [controlPanelExpanded, setControlPanelExpanded] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
+  // Close sidebar on tab change (mobile)
+  const handleTabChange = useCallback((tab: TabType) => {
+    setActiveTab(tab);
+    setSidebarOpen(false);
+  }, []);
 
   // ── URL Query Sync ──
   const searchParams = useSearchParams();
@@ -135,9 +155,7 @@ function DashboardContent() {
     setIsAnimating(false);
   }, [selectedOrigin, selectedDest]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Route calculation — tries FastAPI backend, falls back to client-side
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Route calculation ──
   const handleFindRoute = useCallback(async () => {
     if (!selectedOrigin || !selectedDest || !graphData) return;
 
@@ -164,7 +182,6 @@ function DashboardContent() {
     try {
       let result: AlgorithmResult;
 
-      // Try FastAPI backend first
       try {
         const apiRes = await postRoute({
           origin: selectedOrigin,
@@ -180,7 +197,6 @@ function DashboardContent() {
         };
         setLogs((p) => [...p, `[${ts0}] API: Backend FastAPI responded`]);
       } catch {
-        // Fallback to client-side computation
         result = computeRoute({
           origin: selectedOrigin,
           destination: selectedDest,
@@ -207,12 +223,11 @@ function DashboardContent() {
         setTimeout(() => setIsAnimating(false), dur);
       }
 
+      // On mobile, collapse control panel after finding route to see map
+      if (isMobile) setControlPanelExpanded(false);
+
       try {
-        const { masked } = computeBlockedEdges(
-          graphData.edges,
-          graphData.nodes,
-          nfzZones.filter((z) => z.active)
-        );
+        const { masked } = computeBlockedEdges(graphData.edges, graphData.nodes, nfzZones.filter((z) => z.active));
         const kResults = yenKShortest(graphData.nodes, graphData.edges, masked, selectedOrigin, selectedDest, 3);
         setKPaths(kResults);
       } catch { /* K-shortest non-critical */ }
@@ -225,11 +240,9 @@ function DashboardContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedOrigin, selectedDest, selectedAlgo, graphData, nfzZones, airports.length, animateExploration]);
+  }, [selectedOrigin, selectedDest, selectedAlgo, graphData, nfzZones, airports.length, animateExploration, isMobile]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // NFZ toggle
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── NFZ toggle ──
   const handleToggleNfz = useCallback(
     async (id: string, active: boolean) => {
       const updatedZones = nfzZones.map((z) => (z.id === id ? { ...z, active } : z));
@@ -267,9 +280,7 @@ function DashboardContent() {
     [currentPath, selectedOrigin, selectedDest, selectedAlgo, graphData, nfzZones]
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Map click
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Map click ──
   const handleSelectAirport = useCallback(
     (iata: string) => {
       if (!selectedOrigin) {
@@ -284,13 +295,113 @@ function DashboardContent() {
     [selectedOrigin, selectedDest]
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Render
+  // ── Sidebar content (shared between desktop fixed + mobile drawer) ──
+  const SidebarContent = () => (
+    <>
+      {/* Logo */}
+      <div className="flex items-center gap-3 px-6 py-5 border-b border-white/[0.06]">
+        <span className="material-symbols-outlined text-primary" style={{ fontSize: "28px" }}>
+          flight_takeoff
+        </span>
+        <div>
+          <div
+            className="text-on-surface font-bold text-lg leading-none"
+            style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}
+          >
+            SkyRoute
+          </div>
+          <div
+            className="text-outline text-xs mt-0.5"
+            style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
+          >
+            Analytics v3
+          </div>
+        </div>
+        {/* Mobile close button */}
+        {isMobile && (
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="ml-auto w-8 h-8 rounded-full flex items-center justify-center text-outline hover:text-on-surface transition-colors"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>close</span>
+          </button>
+        )}
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 py-4 px-3 flex flex-col gap-1 overflow-y-auto">
+        {NAV_ITEMS.map(({ icon, label, tab }) => {
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              onClick={() => handleTabChange(tab)}
+              className="flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all relative"
+              style={{
+                background: isActive ? "rgba(208,188,255,0.1)" : "transparent",
+                color: isActive ? "#d0bcff" : "#958ea0",
+                fontFamily: "Inter, sans-serif",
+                fontSize: "14px",
+                fontWeight: isActive ? 500 : 400,
+                borderLeft: isActive ? "3px solid #d0bcff" : "3px solid transparent",
+              }}
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{
+                  fontSize: "20px",
+                  color: isActive ? "#d0bcff" : "#958ea0",
+                  fontVariationSettings: isActive
+                    ? "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24"
+                    : "'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24",
+                }}
+              >
+                {icon}
+              </span>
+              {label}
+              {isActive && (
+                <div className="absolute right-3 w-1.5 h-1.5 rounded-full" style={{ background: "#d0bcff" }} />
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Bottom actions */}
+      <div className="px-3 py-4 border-t border-white/[0.06] flex flex-col gap-1">
+        <button
+          onClick={() => { setShowSettings(true); setSidebarOpen(false); }}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+          style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>settings</span>
+          Pengaturan
+        </button>
+        <button
+          onClick={() => { setShowHelp(true); setSidebarOpen(false); }}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+          style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>help_outline</span>
+          Bantuan
+        </button>
+        <button
+          onClick={() => router.push("/")}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+          style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>home</span>
+          Beranda
+        </button>
+      </div>
+    </>
+  );
+
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div
       className="flex h-screen overflow-hidden"
-      style={{ background: "#15121b", color: "#e7e0ed" }}
+      style={{ background: "var(--background)", color: "var(--on-surface)" }}
     >
       {/* Background orbs */}
       <div className="fixed pointer-events-none" style={{ top: "-80px", left: "-80px", zIndex: 0 }}>
@@ -311,122 +422,85 @@ function DashboardContent() {
       />
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
 
-      {/* ── Fixed Sidebar ── */}
+      {/* ── Mobile sidebar backdrop ── */}
+      <AnimatePresence>
+        {isMobile && sidebarOpen && (
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-40"
+            style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)" }}
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Sidebar ── */}
       <aside
         className="fixed top-0 left-0 bottom-0 flex flex-col glass-panel-solid"
-        style={{ width: "280px", zIndex: 30, borderTop: "none", borderBottom: "none", borderLeft: "none" }}
+        style={{
+          width: "280px",
+          zIndex: 50,
+          borderTop: "none",
+          borderBottom: "none",
+          borderLeft: "none",
+          transform: isMobile ? (sidebarOpen ? "translateX(0)" : "translateX(-100%)") : "translateX(0)",
+          transition: "transform 0.26s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
       >
-        {/* Logo */}
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-white/[0.06]">
-          <span className="material-symbols-outlined text-primary" style={{ fontSize: "28px" }}>
-            flight_takeoff
-          </span>
-          <div>
-            <div
-              className="text-on-surface font-bold text-lg leading-none"
-              style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}
-            >
-              SkyRoute
-            </div>
-            <div
-              className="text-outline text-xs mt-0.5"
-              style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
-            >
-              Analytics v3
-            </div>
-          </div>
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 py-4 px-3 flex flex-col gap-1 overflow-y-auto">
-          {NAV_ITEMS.map(({ icon, label, tab }) => {
-            const isActive = activeTab === tab;
-            return (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all relative"
-                style={{
-                  background: isActive ? "rgba(208,188,255,0.1)" : "transparent",
-                  color: isActive ? "#d0bcff" : "#958ea0",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "14px",
-                  fontWeight: isActive ? 500 : 400,
-                  borderLeft: isActive ? "3px solid #d0bcff" : "3px solid transparent",
-                }}
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={{
-                    fontSize: "20px",
-                    color: isActive ? "#d0bcff" : "#958ea0",
-                    fontVariationSettings: isActive
-                      ? "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24"
-                      : "'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24",
-                  }}
-                >
-                  {icon}
-                </span>
-                {label}
-                {isActive && (
-                  <div
-                    className="absolute right-3 w-1.5 h-1.5 rounded-full"
-                    style={{ background: "#d0bcff" }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Bottom actions */}
-        <div className="px-3 py-4 border-t border-white/[0.06] flex flex-col gap-1">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
-            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>settings</span>
-            Pengaturan
-          </button>
-          <button
-            onClick={() => setShowHelp(true)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
-            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>help_outline</span>
-            Bantuan
-          </button>
-          <button
-            onClick={() => router.push("/")}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
-            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>home</span>
-            Beranda
-          </button>
-        </div>
+        <SidebarContent />
       </aside>
 
       {/* ── Fixed Header ── */}
       <header
-        className="fixed top-0 right-0 flex items-center justify-between px-6 glass-panel-solid"
-        style={{ left: "280px", height: "64px", zIndex: 20, borderTop: "none", borderRight: "none" }}
+        className="fixed top-0 right-0 flex items-center justify-between px-4 md:px-6 glass-panel-solid"
+        style={{
+          left: isMobile ? 0 : "280px",
+          height: "64px",
+          zIndex: 30,
+          borderTop: "none",
+          borderRight: "none",
+          transition: "left 0.26s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
       >
-        {/* Status */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 glass-panel rounded-full px-4 py-1.5">
-            <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+        {/* Left: hamburger (mobile) + status */}
+        <div className="flex items-center gap-2 min-w-0">
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="w-9 h-9 rounded-full glass-panel flex items-center justify-center text-outline hover:text-on-surface transition-colors shrink-0"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: "22px" }}>menu</span>
+            </button>
+          )}
+
+          {/* Status chip — hidden on very small mobile to save space */}
+          <div className="hidden sm:flex items-center gap-2 glass-panel rounded-full px-3 py-1.5 min-w-0">
+            <div className="w-2 h-2 rounded-full bg-secondary animate-pulse shrink-0" />
             <span
-              className="text-on-surface-variant"
+              className="text-on-surface-variant truncate"
               style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", letterSpacing: "0.05em" }}
             >
               Network Active — {airports.length} nodes
             </span>
           </div>
-          {currentPath && (
+
+          {/* Mobile: show logo text instead */}
+          {isMobile && (
+            <span
+              className="font-bold text-base"
+              style={{ fontFamily: "var(--font-sora), Sora, sans-serif", color: "var(--primary)" }}
+            >
+              SkyRoute
+            </span>
+          )}
+
+          {currentPath && !isMobile && (
             <div
-              className="glass-panel rounded-full px-4 py-1.5 text-primary"
+              className="glass-panel rounded-full px-3 py-1.5 text-primary hidden lg:block"
               style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", letterSpacing: "0.03em" }}
             >
               {currentPath.path[0]} → {currentPath.path[currentPath.path.length - 1]} · {currentPath.total_distance.toFixed(0)} km
@@ -435,19 +509,98 @@ function DashboardContent() {
         </div>
 
         {/* Right actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {isLoading && (
-            <div className="flex items-center gap-2 text-secondary" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
+            <div className="hidden sm:flex items-center gap-2 text-secondary" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
               <div className="w-1 h-1 rounded-full bg-secondary animate-ping" />
               Computing...
             </div>
           )}
-          <button
-            onClick={() => setShowHelp(true)}
-            className="w-9 h-9 rounded-full glass-panel flex items-center justify-center text-outline hover:text-on-surface transition-colors"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>notifications</span>
-          </button>
+
+          {/* Notification bell */}
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifications((p) => !p)}
+              className="w-9 h-9 rounded-full glass-panel flex items-center justify-center text-outline hover:text-on-surface transition-colors relative"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>notifications</span>
+              {logs.length > 0 && (
+                <span
+                  className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-secondary"
+                  style={{ border: "2px solid var(--background)" }}
+                />
+              )}
+            </button>
+
+            {showNotifications && (
+              <>
+                <div className="fixed inset-0 z-[2050]" onClick={() => setShowNotifications(false)} />
+                <div
+                  className="fixed glass-panel-solid rounded-xl shadow-2xl z-[2051]"
+                  style={{ top: "70px", right: "12px", width: isMobile ? "calc(100vw - 24px)" : "340px" }}
+                >
+                  <div
+                    className="flex items-center justify-between px-4 py-3"
+                    style={{ borderBottom: "1px solid rgba(128,128,128,0.12)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+                      <span
+                        className="text-primary text-xs font-semibold"
+                        style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.06em" }}
+                      >
+                        NOTIFIKASI SISTEM
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowNotifications(false)}
+                      className="text-outline hover:text-on-surface text-xs transition-colors w-6 h-6 flex items-center justify-center rounded"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto">
+                    {logs.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-outline text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                        Belum ada aktivitas sistem
+                      </div>
+                    ) : (
+                      [...logs].reverse().slice(0, 10).map((log, i) => {
+                        const isError   = log.includes("ERROR");
+                        const isSuccess = log.includes("PATH_RESOLVED") || log.includes("API:");
+                        return (
+                          <div
+                            key={i}
+                            className="px-4 py-2 text-xs"
+                            style={{
+                              fontFamily: "JetBrains Mono, monospace",
+                              color: isError ? "var(--error)" : isSuccess ? "var(--secondary)" : "var(--on-surface-variant)",
+                              borderBottom: "1px solid rgba(128,128,128,0.06)",
+                              lineHeight: "1.5",
+                            }}
+                          >
+                            {log}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="px-4 py-2.5 flex justify-end" style={{ borderTop: "1px solid rgba(128,128,128,0.08)" }}>
+                    <button
+                      onClick={() => { setShowHelp(true); setShowNotifications(false); }}
+                      className="text-xs text-primary hover:underline transition-colors"
+                      style={{ fontFamily: "Inter, sans-serif" }}
+                    >
+                      Lihat dokumentasi →
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           <div
             className="w-9 h-9 rounded-full flex items-center justify-center text-on-primary text-sm font-bold cursor-pointer"
             style={{ background: "linear-gradient(135deg, #d0bcff 0%, #6d3bd7 100%)", fontFamily: "Sora, sans-serif" }}
@@ -460,44 +613,63 @@ function DashboardContent() {
       {/* ── Main Content ── */}
       <main
         className="flex flex-col flex-1 overflow-hidden"
-        style={{ marginLeft: "280px", marginTop: "64px", height: "calc(100vh - 64px)", position: "relative", zIndex: 10 }}
+        style={{
+          marginLeft: isMobile ? 0 : "280px",
+          marginTop: "64px",
+          height: `calc(100vh - 64px${isMobile ? " - 56px" : ""})`,
+          position: "relative",
+          zIndex: 10,
+          transition: "margin-left 0.26s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
       >
-        {/* Tab pills */}
-        <div
-          className="flex items-center gap-1 px-4 py-3 glass-panel shrink-0"
-          style={{ borderLeft: "none", borderRight: "none", borderTop: "none" }}
-        >
-          {NAV_ITEMS.map(({ icon, label, tab }) => {
-            const isActive = activeTab === tab;
-            return (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
-                style={{
-                  background: isActive ? "rgba(208,188,255,0.12)" : "transparent",
-                  color: isActive ? "#d0bcff" : "#958ea0",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "13px",
-                  fontWeight: isActive ? 500 : 400,
-                  border: isActive ? "1px solid rgba(208,188,255,0.2)" : "1px solid transparent",
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>{icon}</span>
-                {label}
-              </button>
-            );
-          })}
+        {/* Tab pills — desktop only */}
+        {!isMobile && (
+          <div
+            className="flex items-center gap-1 px-4 py-3 glass-panel shrink-0 overflow-x-auto"
+            style={{ borderLeft: "none", borderRight: "none", borderTop: "none" }}
+          >
+            {NAV_ITEMS.map(({ icon, label, tab }) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all shrink-0"
+                  style={{
+                    background: isActive ? "rgba(208,188,255,0.12)" : "transparent",
+                    color: isActive ? "#d0bcff" : "#958ea0",
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "13px",
+                    fontWeight: isActive ? 500 : 400,
+                    border: isActive ? "1px solid rgba(208,188,255,0.2)" : "1px solid transparent",
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>{icon}</span>
+                  {label}
+                </button>
+              );
+            })}
 
-          {error && (
-            <div
-              className="ml-auto text-error text-xs px-3 py-1.5 rounded-lg"
-              style={{ background: "rgba(255,180,171,0.1)", fontFamily: "JetBrains Mono, monospace" }}
-            >
-              {error}
-            </div>
-          )}
-        </div>
+            {error && (
+              <div
+                className="ml-auto text-error text-xs px-3 py-1.5 rounded-lg shrink-0"
+                style={{ background: "rgba(255,180,171,0.1)", fontFamily: "JetBrains Mono, monospace" }}
+              >
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Mobile: error banner */}
+        {isMobile && error && (
+          <div
+            className="mx-3 mt-2 text-error text-xs px-3 py-2 rounded-lg shrink-0"
+            style={{ background: "rgba(255,180,171,0.1)", fontFamily: "JetBrains Mono, monospace" }}
+          >
+            {error}
+          </div>
+        )}
 
         {/* Workspace area */}
         <div className="flex-1 overflow-hidden">
@@ -510,9 +682,18 @@ function DashboardContent() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.18 }}
                 className="flex h-full overflow-hidden"
+                style={{ flexDirection: isMobile ? "column" : "row" }}
               >
-                {/* Center Map Area */}
-                <section className="flex flex-col flex-1 p-3 gap-3 overflow-hidden">
+                {/* ── Center Map Area ── */}
+                <section
+                  className="flex flex-col gap-3 overflow-hidden"
+                  style={{
+                    flex: isMobile ? "none" : "1",
+                    padding: isMobile ? "8px" : "12px",
+                    height: isMobile ? (controlPanelExpanded ? "45%" : "calc(100% - 56px)") : "100%",
+                    transition: "height 0.3s ease",
+                  }}
+                >
                   <div className="flex-1 glass-panel rounded-xl overflow-hidden relative" style={{ minHeight: 0 }}>
                     <MapView
                       airports={airports}
@@ -529,24 +710,24 @@ function DashboardContent() {
 
                     {/* Overlay info panel */}
                     <div
-                      className="absolute top-3 left-3 glass-panel-solid rounded-xl p-3 z-[1000] w-52 pointer-events-none"
-                      style={{ fontFamily: "JetBrains Mono, monospace" }}
+                      className="absolute top-3 left-3 glass-panel-solid rounded-xl p-3 z-[1000] pointer-events-none"
+                      style={{ fontFamily: "JetBrains Mono, monospace", width: isMobile ? "140px" : "208px" }}
                     >
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-outline text-xs">Network</span>
-                        <span className="text-secondary text-xs">v3.44</span>
+                        <span className="text-outline" style={{ fontSize: isMobile ? "10px" : "12px" }}>Network</span>
+                        <span className="text-secondary" style={{ fontSize: isMobile ? "10px" : "12px" }}>v3.44</span>
                       </div>
                       <div className="h-px w-full mb-2" style={{ background: "rgba(255,255,255,0.06)" }} />
-                      <div className="flex justify-between items-center text-xs">
+                      <div className="flex justify-between items-center" style={{ fontSize: isMobile ? "10px" : "12px" }}>
                         <span className="text-outline">Nodes</span>
                         <span className="text-secondary">{airports.length}</span>
                       </div>
-                      <div className="flex justify-between items-center text-xs mt-1">
+                      <div className="flex justify-between items-center mt-1" style={{ fontSize: isMobile ? "10px" : "12px" }}>
                         <span className="text-outline">Algorithm</span>
                         <span className="text-secondary">{selectedAlgo.toUpperCase()}</span>
                       </div>
                       {currentPath && (
-                        <div className="mt-2 pt-2 flex justify-between items-center text-xs" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                        <div className="mt-2 pt-2 flex justify-between items-center" style={{ borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: isMobile ? "10px" : "12px" }}>
                           <span className="text-outline">Explored</span>
                           <span className="text-primary">{currentPath.nodesExplored} nodes</span>
                         </div>
@@ -554,7 +735,7 @@ function DashboardContent() {
                     </div>
 
                     {/* K-shortest legend */}
-                    {kPaths.length > 1 && !isAnimating && (
+                    {kPaths.length > 1 && !isAnimating && !isMobile && (
                       <div
                         className="absolute bottom-3 left-3 glass-panel-solid rounded-xl p-2 z-[1000] pointer-events-none"
                         style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}
@@ -576,54 +757,131 @@ function DashboardContent() {
                         ))}
                       </div>
                     )}
+
+                    {/* Mobile: current route badge on map */}
+                    {isMobile && currentPath && (
+                      <div
+                        className="absolute bottom-3 left-3 right-3 glass-panel-solid rounded-xl px-3 py-2 z-[1000] pointer-events-none flex items-center gap-2"
+                        style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}
+                      >
+                        <span className="material-symbols-outlined text-secondary" style={{ fontSize: "14px" }}>route</span>
+                        <span className="text-primary truncate">
+                          {currentPath.path.join(" → ")}
+                        </span>
+                        <span className="text-outline shrink-0 ml-auto">
+                          {currentPath.total_distance.toFixed(0)} km
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* System Event Log */}
-                  <div className="h-36 glass-panel rounded-xl flex flex-col overflow-hidden shrink-0">
-                    <div className="flex items-center px-4 py-2 gap-3 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                      <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                      <span
-                        className="text-primary text-xs font-medium"
-                        style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
-                      >
-                        SYSTEM EVENT LOG
-                      </span>
-                      <span className="ml-auto text-outline text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                        UTF-8 · Sector 7G
-                      </span>
+                  {/* System Event Log — desktop only in map section */}
+                  {!isMobile && (
+                    <div className="h-36 glass-panel rounded-xl flex flex-col overflow-hidden shrink-0">
+                      <div className="flex items-center px-4 py-2 gap-3 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                        <span
+                          className="text-primary text-xs font-medium"
+                          style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
+                        >
+                          SYSTEM EVENT LOG
+                        </span>
+                        <span className="ml-auto text-outline text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                          UTF-8 · Sector 7G
+                        </span>
+                      </div>
+                      <div className="flex-1 p-3 overflow-y-auto" style={{ background: "rgba(15,13,21,0.6)" }}>
+                        <ResultPanel
+                          currentPath={currentPath}
+                          isLoading={isLoading}
+                          isRecalculating={isRecalculating}
+                          logs={logs}
+                        />
+                      </div>
                     </div>
-                    <div className="flex-1 p-3 overflow-y-auto" style={{ background: "rgba(15,13,21,0.6)" }}>
-                      <ResultPanel
-                        currentPath={currentPath}
+                  )}
+                </section>
+
+                {/* ── Control Panel ── */}
+                {isMobile ? (
+                  /* Mobile: collapsible bottom drawer */
+                  <div
+                    className="glass-panel-solid flex flex-col shrink-0"
+                    style={{
+                      borderLeft: "none",
+                      borderRight: "none",
+                      borderBottom: "none",
+                      height: controlPanelExpanded ? "55%" : "56px",
+                      transition: "height 0.3s ease",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {/* Drawer handle / header */}
+                    <button
+                      onClick={() => setControlPanelExpanded((p) => !p)}
+                      className="flex items-center gap-3 px-4 shrink-0 w-full"
+                      style={{ height: "56px", borderBottom: controlPanelExpanded ? "1px solid rgba(255,255,255,0.06)" : "none" }}
+                    >
+                      <div className="w-8 h-1 rounded-full mx-auto" style={{ background: "rgba(255,255,255,0.15)", position: "absolute", left: "50%", transform: "translateX(-50%)", top: "10px", width: "36px" }} />
+                      <span className="material-symbols-outlined text-primary" style={{ fontSize: "18px" }}>tune</span>
+                      <span className="text-primary text-sm font-medium" style={{ fontFamily: "Inter, sans-serif" }}>
+                        Pengaturan Rute
+                      </span>
+                      {selectedOrigin && selectedDest && (
+                        <span className="text-outline text-xs ml-1" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                          {selectedOrigin} → {selectedDest}
+                        </span>
+                      )}
+                      <span
+                        className="ml-auto material-symbols-outlined text-outline transition-transform"
+                        style={{ fontSize: "18px", transform: controlPanelExpanded ? "rotate(180deg)" : "none" }}
+                      >
+                        expand_less
+                      </span>
+                    </button>
+
+                    {/* Scrollable control panel content */}
+                    <div className="flex-1 overflow-y-auto p-4">
+                      <ControlPanel
+                        airports={airports}
+                        nfzZones={nfzZones}
+                        selectedOrigin={selectedOrigin}
+                        selectedDest={selectedDest}
+                        selectedAlgo={selectedAlgo}
                         isLoading={isLoading}
-                        isRecalculating={isRecalculating}
-                        logs={logs}
+                        animateExploration={animateExploration}
+                        onSelectOrigin={setSelectedOrigin}
+                        onSelectDest={setSelectedDest}
+                        onSelectAlgo={setSelectedAlgo}
+                        onToggleNfz={handleToggleNfz}
+                        onFindRoute={handleFindRoute}
+                        onToggleAnimate={setAnimateExploration}
                       />
                     </div>
                   </div>
-                </section>
-
-                {/* Right Control Panel */}
-                <aside
-                  className="w-[320px] glass-panel flex flex-col p-5 overflow-y-auto shrink-0"
-                  style={{ borderTop: "none", borderBottom: "none", borderRight: "none" }}
-                >
-                  <ControlPanel
-                    airports={airports}
-                    nfzZones={nfzZones}
-                    selectedOrigin={selectedOrigin}
-                    selectedDest={selectedDest}
-                    selectedAlgo={selectedAlgo}
-                    isLoading={isLoading}
-                    animateExploration={animateExploration}
-                    onSelectOrigin={setSelectedOrigin}
-                    onSelectDest={setSelectedDest}
-                    onSelectAlgo={setSelectedAlgo}
-                    onToggleNfz={handleToggleNfz}
-                    onFindRoute={handleFindRoute}
-                    onToggleAnimate={setAnimateExploration}
-                  />
-                </aside>
+                ) : (
+                  /* Desktop: fixed-width right panel */
+                  <aside
+                    className="w-[320px] glass-panel flex flex-col p-5 overflow-y-auto shrink-0"
+                    style={{ borderTop: "none", borderBottom: "none", borderRight: "none" }}
+                  >
+                    <ControlPanel
+                      airports={airports}
+                      nfzZones={nfzZones}
+                      selectedOrigin={selectedOrigin}
+                      selectedDest={selectedDest}
+                      selectedAlgo={selectedAlgo}
+                      isLoading={isLoading}
+                      animateExploration={animateExploration}
+                      onSelectOrigin={setSelectedOrigin}
+                      onSelectDest={setSelectedDest}
+                      onSelectAlgo={setSelectedAlgo}
+                      onToggleNfz={handleToggleNfz}
+                      onFindRoute={handleFindRoute}
+                      onToggleAnimate={setAnimateExploration}
+                    />
+                  </aside>
+                )}
               </motion.div>
             )}
 
@@ -678,6 +936,61 @@ function DashboardContent() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* ── Mobile Bottom Navigation Bar ── */}
+      {isMobile && (
+        <nav
+          className="fixed bottom-0 left-0 right-0 glass-panel-solid z-30 flex items-center"
+          style={{
+            height: "56px",
+            borderBottom: "none",
+            borderLeft: "none",
+            borderRight: "none",
+            paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          }}
+        >
+          {NAV_ITEMS.map(({ icon, label, tab }) => {
+            const isActive = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="flex-1 flex flex-col items-center justify-center gap-0.5 h-full transition-all"
+                style={{ color: isActive ? "#d0bcff" : "#958ea0" }}
+              >
+                <span
+                  className="material-symbols-outlined"
+                  style={{
+                    fontSize: "22px",
+                    fontVariationSettings: isActive
+                      ? "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24"
+                      : "'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24",
+                  }}
+                >
+                  {icon}
+                </span>
+                <span
+                  className="text-center leading-none"
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: "9px",
+                    fontWeight: isActive ? 600 : 400,
+                    letterSpacing: "0.01em",
+                  }}
+                >
+                  {label === "Status Jaringan" ? "Status" : label === "Log Aktivitas" ? "Logs" : label}
+                </span>
+                {isActive && (
+                  <div
+                    className="absolute bottom-0 w-10 h-0.5 rounded-t-full"
+                    style={{ background: "#d0bcff" }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }

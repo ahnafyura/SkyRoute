@@ -71,7 +71,8 @@ export async function fetchAirports(): Promise<{ airports: AirportNode[] }> {
  */
 export async function postRoute(req: RouteRequest): Promise<RouteResponse> {
   if (!USE_LIVE) {
-    return MOCK_ROUTE_RESPONSE;
+    // Throw so handleFindRoute falls back to client-side computeRoute()
+    throw new Error("DUMMY_MODE: no backend — using client-side route engine.");
   }
 
   const payload = {
@@ -117,17 +118,3 @@ export async function toggleNfz(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Mock Data — used exclusively in dummy mode
-// ---------------------------------------------------------------------------
-
-const MOCK_ROUTE_RESPONSE: RouteResponse = {
-  path: ["CGK", "SUB", "DPS"],
-  total_distance: 969.24,
-  edges_used: [
-    { from: "CGK", to: "SUB", weight: 664.83 },
-    { from: "SUB", to: "DPS", weight: 304.41 },
-  ],
-  blocked_edges: [],
-  recalculated: false,
-};

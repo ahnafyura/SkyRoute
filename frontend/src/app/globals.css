@@ -2,8 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── MD3 Theme Variables (dark-only, matching Stitch design) ─────────────── */
-:root {
+/* ── MD3 Theme Variables ──────────────────────────────────────────────────── */
+
+/* Default = dark (matches Stitch design) */
+:root,
+.dark {
   --background:               #15121b;
   --foreground:               #e7e0ed;
   --surface:                  #15121b;
@@ -26,7 +29,6 @@
   --outline-variant:          #494454;
   --error:                    #ffb4ab;
 
-  /* Legacy sky-* aliases for backward compat with inline styles */
   --sky-bg:      #15121b;
   --sky-panel:   #1d1a23;
   --sky-surface: #211e27;
@@ -37,17 +39,38 @@
   --sky-muted:   #958ea0;
 }
 
-.dark {
-  --background:               #15121b;
-  --foreground:               #e7e0ed;
-  --sky-bg:      #15121b;
-  --sky-panel:   #1d1a23;
-  --sky-surface: #211e27;
-  --sky-border:  #494454;
-  --sky-accent:  #d0bcff;
-  --sky-cyan:    #4cd7f6;
-  --sky-text:    #e7e0ed;
-  --sky-muted:   #958ea0;
+/* Light mode overrides */
+.light {
+  --background:               #fffbfe;
+  --foreground:               #1c1b1e;
+  --surface:                  #fffbfe;
+  --surface-container-low:    #f7f2fa;
+  --surface-container:        #f2eff7;
+  --surface-container-high:   #ece8f4;
+  --surface-container-highest:#e6e1ee;
+  --on-surface:               #1c1b1e;
+  --on-surface-variant:       #49454f;
+  --primary:                  #6d3bd7;
+  --on-primary:               #ffffff;
+  --primary-container:        #e9ddff;
+  --inverse-primary:          #d0bcff;
+  --secondary:                #006874;
+  --on-secondary:             #ffffff;
+  --secondary-container:      #acedff;
+  --tertiary:                 #444173;
+  --tertiary-container:       #e3dfff;
+  --outline:                  #79747e;
+  --outline-variant:          #cac4d0;
+  --error:                    #ba1a1a;
+
+  --sky-bg:      #fffbfe;
+  --sky-panel:   #f7f2fa;
+  --sky-surface: #f2eff7;
+  --sky-border:  #cac4d0;
+  --sky-accent:  #6d3bd7;
+  --sky-cyan:    #006874;
+  --sky-text:    #1c1b1e;
+  --sky-muted:   #79747e;
 }
 
 body {
@@ -73,14 +96,43 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
+  /* Light mode glass overrides */
+  .light .glass-panel {
+    background: rgba(242, 239, 247, 0.55);
+    border: 1px solid rgba(73, 69, 79, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 4px rgba(0,0,0,0.06);
+  }
+
+  .light .glass-panel-solid {
+    background: rgba(247, 242, 250, 0.95);
+    border: 1px solid rgba(73, 69, 79, 0.1);
+    box-shadow: 0 1px 8px rgba(0,0,0,0.08);
+  }
+
   .glass-glow {
     box-shadow:
       0 0 0 1px rgba(208, 188, 255, 0.1),
       0 4px 24px rgba(208, 188, 255, 0.08);
   }
 
+  .glow-effect {
+    box-shadow: 0 0 40px rgba(208, 188, 255, 0.15);
+  }
+
+  .light .glow-effect {
+    box-shadow: 0 0 24px rgba(109, 59, 215, 0.08);
+  }
+
   .text-gradient {
     background: linear-gradient(135deg, #d0bcff 0%, #4cd7f6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Deeper, saturated gradient for light mode readability */
+  .light .text-gradient {
+    background: linear-gradient(135deg, #6d3bd7 0%, #006874 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -226,4 +278,49 @@ body {
 /* Material Symbols Outlined */
 .material-symbols-outlined {
   font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ── Light Mode — Tailwind class overrides ───────────────────────────────── */
+.light body {
+  background: var(--background);
+  color: var(--on-surface);
+}
+
+.light .text-on-surface         { color: var(--on-surface) !important; }
+.light .text-on-surface-variant { color: var(--on-surface-variant) !important; }
+.light .text-primary            { color: var(--primary) !important; }
+.light .text-secondary          { color: var(--secondary) !important; }
+.light .text-tertiary           { color: var(--tertiary) !important; }
+.light .text-outline            { color: var(--outline) !important; }
+.light .text-error              { color: var(--error) !important; }
+
+.light .bg-background           { background-color: var(--background) !important; }
+.light .bg-surface              { background-color: var(--surface) !important; }
+.light .border-outline-variant  { border-color: var(--outline-variant) !important; }
+
+/* Leaflet / distance chip adapts to light mode */
+.light .distance-chip {
+  background: rgba(247, 242, 250, 0.92);
+  border: 1px solid rgba(73, 69, 79, 0.2);
+  color: var(--on-surface-variant);
+}
+
+/* Orbs are more subtle in light mode */
+.light .orb-purple {
+  background: radial-gradient(circle, rgba(109, 59, 215, 0.08) 0%, transparent 70%);
+}
+.light .orb-cyan {
+  background: radial-gradient(circle, rgba(0, 104, 116, 0.06) 0%, transparent 70%);
+}
+
+/* Landing page shader is barely visible in light mode */
+.light #landing-shader {
+  opacity: 0.05 !important;
+}
+
+/* Grid pattern more subtle in light mode */
+.light .bg-grid-pattern {
+  background-image:
+    linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
 }

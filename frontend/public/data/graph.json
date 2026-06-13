@@ -36,7 +36,6 @@
     { "from": "SUB", "to": "SRG", "weight": 272.50 },
     { "from": "SUB", "to": "SOC", "weight": 234.61 },
     { "from": "DPS", "to": "UPG", "weight": 612.88 },
-    { "from": "DPS", "to": "SUB", "weight": 304.41 },
     { "from": "UPG", "to": "MDC", "weight": 785.34 },
     { "from": "UPG", "to": "BPN", "weight": 583.20 },
     { "from": "BPN", "to": "MDC", "weight": 1122.45 },
@@ -51,7 +50,6 @@
     { "from": "PDG", "to": "PLM", "weight": 594.12 },
     { "from": "PDG", "to": "PKU", "weight": 276.89 },
     { "from": "PLM", "to": "BTH", "weight": 489.33 },
-    { "from": "PLM", "to": "CGK", "weight": 434.68 },
     { "from": "BDO", "to": "JOG", "weight": 336.44 },
     { "from": "BDO", "to": "SUB", "weight": 566.22 },
     { "from": "BTH", "to": "PKU", "weight": 287.14 }
