@@ -87,18 +87,18 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
             style={{ maxHeight: "80vh" }}
           >
             <div
-              className="bg-sky-panel border border-sky-border rounded-xl shadow-2xl flex flex-col"
-              style={{ maxHeight: "80vh" }}
+              className="glass-panel-solid rounded-2xl shadow-2xl flex flex-col"
+              style={{ maxHeight: "80vh", border: "1px solid rgba(255,255,255,0.1)" }}
             >
               {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b border-sky-border shrink-0">
+              <div className="flex items-center justify-between p-6 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                 <div>
-                  <div className="text-[10px] text-sky-muted tracking-widest">DOCUMENTATION</div>
-                  <h2 className="text-xl font-bold tracking-widest text-sky-text">SYSTEM HELP</h2>
+                  <div className="text-xs text-outline tracking-widest mb-0.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>DOKUMENTASI</div>
+                  <h2 className="text-xl font-bold text-on-surface" style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}>Bantuan Sistem</h2>
                 </div>
                 <button
                   onClick={onClose}
-                  className="text-sky-muted hover:text-sky-text transition-colors w-7 h-7 flex items-center justify-center rounded border border-sky-border hover:border-sky-muted text-sm"
+                  className="text-outline hover:text-on-surface transition-colors w-8 h-8 flex items-center justify-center rounded-lg glass-panel text-sm"
                 >
                   ✕
                 </button>
@@ -113,13 +113,16 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: si * 0.06 }}
                   >
-                    <div className="text-[10px] text-sky-accent font-bold tracking-widest mb-3 border-b border-sky-border/50 pb-1">
+                    <div
+                      className="text-xs text-primary font-semibold tracking-widest mb-3 pb-1"
+                      style={{ fontFamily: "JetBrains Mono, monospace", borderBottom: "1px solid rgba(208,188,255,0.15)" }}
+                    >
                       {sec.title}
                     </div>
                     <ul className="flex flex-col gap-1.5">
                       {sec.items.map((item, ii) => (
-                        <li key={ii} className="text-[11px] text-sky-muted tracking-wide flex gap-2">
-                          <span className="text-sky-border select-none shrink-0 mt-0.5">›</span>
+                        <li key={ii} className="text-sm text-on-surface-variant flex gap-2" style={{ fontFamily: "Inter, sans-serif" }}>
+                          <span className="text-primary select-none shrink-0 mt-0.5">›</span>
                           <span>{item}</span>
                         </li>
                       ))}
@@ -129,16 +132,17 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
               </div>
 
               {/* Footer */}
-              <div className="p-6 border-t border-sky-border shrink-0 flex justify-between items-center">
-                <span className="text-[10px] text-sky-muted tracking-widest">
-                  AEROOPTIX v3.44.0 // SYSTEM DOCS
+              <div className="p-6 shrink-0 flex justify-between items-center" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <span className="text-xs text-outline" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                  SkyRoute Analytics v3.44.0
                 </span>
                 <motion.button
                   whileTap={{ scale: 0.97 }}
                   onClick={onClose}
-                  className="px-6 py-2 border border-sky-border text-sky-muted text-[11px] font-bold tracking-widest rounded hover:text-sky-text hover:border-sky-muted transition-colors"
+                  className="px-6 py-2.5 text-sm font-semibold rounded-xl transition-all glass-panel text-on-surface-variant hover:text-on-surface"
+                  style={{ fontFamily: "Inter, sans-serif" }}
                 >
-                  CLOSE
+                  Tutup
                 </motion.button>
               </div>
             </div>

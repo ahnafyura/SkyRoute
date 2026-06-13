@@ -20,7 +20,7 @@ import {
   yenKShortest,
   computeBlockedEdges,
 } from "@/lib/algorithms";
-import { toggleNfz } from "@/lib/api";
+import { toggleNfz, postRoute } from "@/lib/api";
 
 import ControlPanel from "@/components/ControlPanel";
 import ResultPanel from "@/components/ResultPanel";
@@ -29,41 +29,43 @@ import SysStatusWorkspace from "@/components/SysStatusWorkspace";
 import LogsWorkspace from "@/components/LogsWorkspace";
 import SettingsModal from "@/components/SettingsModal";
 import HelpModal from "@/components/HelpModal";
-import ThemeToggle from "@/components/ThemeToggle";
 
 const MapView = dynamic(() => import("@/components/MapView"), {
   ssr: false,
   loading: () => (
     <div
+      className="w-full h-full flex items-center justify-center"
       style={{
-        width: "100%",
-        height: "100%",
         minHeight: "400px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--sky-bg)",
-        color: "var(--sky-muted)",
-        fontFamily: "monospace",
+        background: "var(--surface-container-low)",
+        color: "var(--outline)",
+        fontFamily: "JetBrains Mono, monospace",
         fontSize: "12px",
         letterSpacing: "0.1em",
       }}
     >
-      [SYSTEM] INITIALIZING_RADAR...
+      INITIALIZING RADAR...
     </div>
   ),
 });
 
 type TabType = "ROUTE_PLAN" | "FLEET_ALT" | "SYS_STATUS" | "LOGS";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dashboard
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Sidebar nav config ───────────────────────────────────────────────────────
+const NAV_ITEMS: { icon: string; label: string; tab: TabType }[] = [
+  { icon: "map",                      label: "Peta Rute",      tab: "ROUTE_PLAN" },
+  { icon: "flight",                   label: "Telemetri",      tab: "FLEET_ALT"  },
+  { icon: "query_stats",              label: "Status Jaringan",tab: "SYS_STATUS" },
+  { icon: "terminal",                 label: "Log Aktivitas",  tab: "LOGS"       },
+];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard Content
+// ─────────────────────────────────────────────────────────────────────────────
 function DashboardContent() {
   const router = useRouter();
 
-  // ── Static graph data ──
+  // ── Graph data ──
   const [airports, setAirports] = useState<AirportNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -106,24 +108,20 @@ function DashboardContent() {
     }
   }, [tabParam]);
 
-  // ── Load graph + NFZ data on mount ──
+  // ── Load graph + NFZ ──
   useEffect(() => {
     async function loadData() {
       try {
         const [gd, nfzRaw] = await Promise.all([
           fetch("/data/graph.json").then((r) => r.json() as Promise<GraphData>),
-          fetch("/data/nfz.json").then((r) =>
-            r.json() as Promise<{ nfz_zones: NfzZone[] }>
-          ),
+          fetch("/data/nfz.json").then((r) => r.json() as Promise<{ nfz_zones: NfzZone[] }>),
         ]);
         setAirports(gd.nodes);
         setGraphEdges(gd.edges);
         setGraphData(gd);
         setNfzZones(nfzRaw.nfz_zones);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load network data."
-        );
+        setError(err instanceof Error ? err.message : "Failed to load network data.");
       }
     }
     loadData();
@@ -138,18 +136,14 @@ function DashboardContent() {
   }, [selectedOrigin, selectedDest]);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Route calculation
+  // Route calculation — tries FastAPI backend, falls back to client-side
   // ─────────────────────────────────────────────────────────────────────────
-
   const handleFindRoute = useCallback(async () => {
     if (!selectedOrigin || !selectedDest || !graphData) return;
 
     if (selectedOrigin === selectedDest) {
       const ts = new Date().toISOString().substring(11, 19);
-      setLogs((p) => [
-        ...p,
-        `[${ts}] ERROR: Departure and destination cannot be identical.`,
-      ]);
+      setLogs((p) => [...p, `[${ts}] ERROR: Departure and destination cannot be identical.`]);
       return;
     }
 
@@ -168,14 +162,35 @@ function DashboardContent() {
     await new Promise((r) => setTimeout(r, 12));
 
     try {
-      const result = computeRoute({
-        origin: selectedOrigin,
-        destination: selectedDest,
-        algo: selectedAlgo,
-        graphData,
-        nfzZones,
-        trackSteps: animateExploration,
-      });
+      let result: AlgorithmResult;
+
+      // Try FastAPI backend first
+      try {
+        const apiRes = await postRoute({
+          origin: selectedOrigin,
+          destination: selectedDest,
+          algo: selectedAlgo,
+        });
+        result = {
+          ...apiRes,
+          steps: [],
+          nodesExplored: (apiRes as unknown as AlgorithmResult).nodesExplored ?? 0,
+          timeMs: (apiRes as unknown as AlgorithmResult).timeMs ?? 0,
+          algo: selectedAlgo,
+        };
+        setLogs((p) => [...p, `[${ts0}] API: Backend FastAPI responded`]);
+      } catch {
+        // Fallback to client-side computation
+        result = computeRoute({
+          origin: selectedOrigin,
+          destination: selectedDest,
+          algo: selectedAlgo,
+          graphData,
+          nfzZones,
+          trackSteps: animateExploration,
+        });
+        setLogs((p) => [...p, `[${ts0}] API: Using client-side fallback`]);
+      }
 
       setCurrentPath(result);
 
@@ -198,18 +213,9 @@ function DashboardContent() {
           graphData.nodes,
           nfzZones.filter((z) => z.active)
         );
-        const kResults = yenKShortest(
-          graphData.nodes,
-          graphData.edges,
-          masked,
-          selectedOrigin,
-          selectedDest,
-          3
-        );
+        const kResults = yenKShortest(graphData.nodes, graphData.edges, masked, selectedOrigin, selectedDest, 3);
         setKPaths(kResults);
-      } catch {
-        // K-shortest is non-critical
-      }
+      } catch { /* K-shortest non-critical */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Route calculation failed.";
       setError(msg);
@@ -219,25 +225,14 @@ function DashboardContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [
-    selectedOrigin,
-    selectedDest,
-    selectedAlgo,
-    graphData,
-    nfzZones,
-    airports.length,
-    animateExploration,
-  ]);
+  }, [selectedOrigin, selectedDest, selectedAlgo, graphData, nfzZones, airports.length, animateExploration]);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // NFZ toggle — recalculate live route
+  // NFZ toggle
   // ─────────────────────────────────────────────────────────────────────────
-
   const handleToggleNfz = useCallback(
     async (id: string, active: boolean) => {
-      const updatedZones = nfzZones.map((z) =>
-        z.id === id ? { ...z, active } : z
-      );
+      const updatedZones = nfzZones.map((z) => (z.id === id ? { ...z, active } : z));
       setNfzZones(updatedZones);
       await toggleNfz(id, active);
 
@@ -255,24 +250,10 @@ function DashboardContent() {
           });
           setCurrentPath(newRoute);
           const ts = new Date().toISOString().substring(11, 19);
-          setLogs((p) => [
-            ...p,
-            `[${ts}] NFZ_RECALC: ${id} (${active ? "activated" : "deactivated"}) → ${newRoute.path.join(" → ")}`,
-          ]);
+          setLogs((p) => [...p, `[${ts}] NFZ_RECALC: ${id} (${active ? "activated" : "deactivated"}) → ${newRoute.path.join(" → ")}`]);
           try {
-            const { masked } = computeBlockedEdges(
-              graphData.edges,
-              graphData.nodes,
-              updatedZones.filter((z) => z.active)
-            );
-            const kResults = yenKShortest(
-              graphData.nodes,
-              graphData.edges,
-              masked,
-              selectedOrigin,
-              selectedDest,
-              3
-            );
+            const { masked } = computeBlockedEdges(graphData.edges, graphData.nodes, updatedZones.filter((z) => z.active));
+            const kResults = yenKShortest(graphData.nodes, graphData.edges, masked, selectedOrigin, selectedDest, 3);
             setKPaths(kResults);
           } catch { /* silent */ }
         } catch (err) {
@@ -287,9 +268,8 @@ function DashboardContent() {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Map click — select airports
+  // Map click
   // ─────────────────────────────────────────────────────────────────────────
-
   const handleSelectAirport = useCallback(
     (iata: string) => {
       if (!selectedOrigin) {
@@ -305,23 +285,22 @@ function DashboardContent() {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Sidebar nav items
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const NAV_ITEMS: { icon: string; label: string; tab: TabType }[] = [
-    { icon: "📊", label: "SYS_STATUS", tab: "SYS_STATUS" },
-    { icon: "🗺️", label: "ROUTE_PLAN", tab: "ROUTE_PLAN" },
-    { icon: "✈️", label: "FLEET_ALT", tab: "FLEET_ALT" },
-    { icon: "›_", label: "LOGS", tab: "LOGS" },
-  ];
-
-  // ─────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────
-
   return (
-    <div className="animate-fade-in flex flex-col h-screen bg-sky-bg text-sky-muted font-mono overflow-hidden">
-      {/* ── Settings & Help modals ── */}
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ background: "#15121b", color: "#e7e0ed" }}
+    >
+      {/* Background orbs */}
+      <div className="fixed pointer-events-none" style={{ top: "-80px", left: "-80px", zIndex: 0 }}>
+        <div className="orb-purple" style={{ width: "400px", height: "400px" }} />
+      </div>
+      <div className="fixed pointer-events-none" style={{ bottom: "-80px", right: "-80px", zIndex: 0 }}>
+        <div className="orb-cyan" style={{ width: "350px", height: "350px" }} />
+      </div>
+
+      {/* Modals */}
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
@@ -332,301 +311,373 @@ function DashboardContent() {
       />
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
 
-      {/* ── Top Header ── */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-sky-border bg-sky-panel shrink-0">
-        <div className="flex items-center gap-8">
-          <div className="text-2xl font-black tracking-widest text-sky-accent drop-shadow-[0_0_8px_rgba(235,165,250,0.5)]">
-            AERO_OS
-          </div>
-          <nav className="hidden md:flex gap-5 text-[11px] tracking-widest font-semibold">
-            <span className="flex items-center gap-2 px-3 py-1 bg-sky-surface rounded text-sky-text border border-sky-border">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-cyan animate-pulse" />
-              NETWORK: ACTIVE
-            </span>
-            <span
-              onClick={() => router.push("/")}
-              className="flex items-center gap-2 hover:text-sky-text cursor-pointer transition-colors"
+      {/* ── Fixed Sidebar ── */}
+      <aside
+        className="fixed top-0 left-0 bottom-0 flex flex-col glass-panel-solid"
+        style={{ width: "280px", zIndex: 30, borderTop: "none", borderBottom: "none", borderLeft: "none" }}
+      >
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-6 py-5 border-b border-white/[0.06]">
+          <span className="material-symbols-outlined text-primary" style={{ fontSize: "28px" }}>
+            flight_takeoff
+          </span>
+          <div>
+            <div
+              className="text-on-surface font-bold text-lg leading-none"
+              style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-              HOME
-            </span>
-            {NAV_ITEMS.map(({ label, tab }) => (
-              <span
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`cursor-pointer transition-colors ${
-                  activeTab === tab
-                    ? "text-sky-accent border-b-2 border-sky-accent pb-1"
-                    : "hover:text-sky-text"
-                }`}
-              >
-                {label}
-              </span>
-            ))}
-          </nav>
+              SkyRoute
+            </div>
+            <div
+              className="text-outline text-xs mt-0.5"
+              style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
+            >
+              Analytics v3
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 text-sky-muted">
-          <ThemeToggle />
-          <button
-            onClick={() => setShowHelp(true)}
-            className="w-8 h-8 rounded-full border border-sky-border bg-sky-surface flex items-center justify-center cursor-pointer hover:border-sky-muted hover:text-sky-text transition-colors text-[11px] font-bold"
-            title="Help"
-          >
-            ?
-          </button>
+        {/* Nav */}
+        <nav className="flex-1 py-4 px-3 flex flex-col gap-1 overflow-y-auto">
+          {NAV_ITEMS.map(({ icon, label, tab }) => {
+            const isActive = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all relative"
+                style={{
+                  background: isActive ? "rgba(208,188,255,0.1)" : "transparent",
+                  color: isActive ? "#d0bcff" : "#958ea0",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "14px",
+                  fontWeight: isActive ? 500 : 400,
+                  borderLeft: isActive ? "3px solid #d0bcff" : "3px solid transparent",
+                }}
+              >
+                <span
+                  className="material-symbols-outlined"
+                  style={{
+                    fontSize: "20px",
+                    color: isActive ? "#d0bcff" : "#958ea0",
+                    fontVariationSettings: isActive
+                      ? "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24"
+                      : "'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24",
+                  }}
+                >
+                  {icon}
+                </span>
+                {label}
+                {isActive && (
+                  <div
+                    className="absolute right-3 w-1.5 h-1.5 rounded-full"
+                    style={{ background: "#d0bcff" }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Bottom actions */}
+        <div className="px-3 py-4 border-t border-white/[0.06] flex flex-col gap-1">
           <button
             onClick={() => setShowSettings(true)}
-            className="w-8 h-8 rounded-full border border-sky-border bg-sky-surface flex items-center justify-center cursor-pointer hover:border-sky-muted hover:text-sky-text transition-colors"
-            title="Settings"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
           >
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-            </svg>
+            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>settings</span>
+            Pengaturan
           </button>
+          <button
+            onClick={() => setShowHelp(true)}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>help_outline</span>
+            Bantuan
+          </button>
+          <button
+            onClick={() => router.push("/")}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-outline hover:text-on-surface"
+            style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>home</span>
+            Beranda
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Fixed Header ── */}
+      <header
+        className="fixed top-0 right-0 flex items-center justify-between px-6 glass-panel-solid"
+        style={{ left: "280px", height: "64px", zIndex: 20, borderTop: "none", borderRight: "none" }}
+      >
+        {/* Status */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 glass-panel rounded-full px-4 py-1.5">
+            <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+            <span
+              className="text-on-surface-variant"
+              style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", letterSpacing: "0.05em" }}
+            >
+              Network Active — {airports.length} nodes
+            </span>
+          </div>
+          {currentPath && (
+            <div
+              className="glass-panel rounded-full px-4 py-1.5 text-primary"
+              style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", letterSpacing: "0.03em" }}
+            >
+              {currentPath.path[0]} → {currentPath.path[currentPath.path.length - 1]} · {currentPath.total_distance.toFixed(0)} km
+            </div>
+          )}
+        </div>
+
+        {/* Right actions */}
+        <div className="flex items-center gap-3">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-secondary" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px" }}>
+              <div className="w-1 h-1 rounded-full bg-secondary animate-ping" />
+              Computing...
+            </div>
+          )}
+          <button
+            onClick={() => setShowHelp(true)}
+            className="w-9 h-9 rounded-full glass-panel flex items-center justify-center text-outline hover:text-on-surface transition-colors"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>notifications</span>
+          </button>
+          <div
+            className="w-9 h-9 rounded-full flex items-center justify-center text-on-primary text-sm font-bold cursor-pointer"
+            style={{ background: "linear-gradient(135deg, #d0bcff 0%, #6d3bd7 100%)", fontFamily: "Sora, sans-serif" }}
+          >
+            SR
+          </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── Left Sidebar ── */}
-        <aside className="w-56 border-r border-sky-border bg-sky-panel flex flex-col justify-between py-5 shrink-0">
-          <div>
-            <h2 className="text-sky-accent text-xl font-bold px-5 tracking-widest drop-shadow-[0_0_4px_rgba(235,165,250,0.4)]">
-              OPERATIONS
-            </h2>
-            <p className="text-[10px] text-sky-muted px-5 mt-0.5 tracking-[0.2em] mb-6">
-              SECTOR_7G
-            </p>
-            <nav className="flex flex-col text-[11px] tracking-widest text-sky-muted">
-              {NAV_ITEMS.map(({ icon, label, tab }) => (
-                <motion.div
-                  key={label}
-                  whileHover={{ x: 3 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-5 py-2.5 cursor-pointer flex items-center gap-3 transition-colors ${
-                    activeTab === tab
-                      ? "bg-sky-surface border-l-4 border-sky-accent text-sky-text"
-                      : "hover:bg-sky-surface text-sky-muted"
-                  }`}
-                >
-                  <span className="text-base opacity-70">{icon}</span>
-                  {label}
-                </motion.div>
-              ))}
-            </nav>
-          </div>
+      {/* ── Main Content ── */}
+      <main
+        className="flex flex-col flex-1 overflow-hidden"
+        style={{ marginLeft: "280px", marginTop: "64px", height: "calc(100vh - 64px)", position: "relative", zIndex: 10 }}
+      >
+        {/* Tab pills */}
+        <div
+          className="flex items-center gap-1 px-4 py-3 glass-panel shrink-0"
+          style={{ borderLeft: "none", borderRight: "none", borderTop: "none" }}
+        >
+          {NAV_ITEMS.map(({ icon, label, tab }) => {
+            const isActive = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg transition-all"
+                style={{
+                  background: isActive ? "rgba(208,188,255,0.12)" : "transparent",
+                  color: isActive ? "#d0bcff" : "#958ea0",
+                  fontFamily: "Inter, sans-serif",
+                  fontSize: "13px",
+                  fontWeight: isActive ? 500 : 400,
+                  border: isActive ? "1px solid rgba(208,188,255,0.2)" : "1px solid transparent",
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>{icon}</span>
+                {label}
+              </button>
+            );
+          })}
 
-          <div className="px-5">
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={handleFindRoute}
-              disabled={!selectedOrigin || !selectedDest || isLoading}
-              className="w-full py-2.5 bg-sky-accent text-white font-bold tracking-widest rounded text-[11px] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+          {error && (
+            <div
+              className="ml-auto text-error text-xs px-3 py-1.5 rounded-lg"
+              style={{ background: "rgba(255,180,171,0.1)", fontFamily: "JetBrains Mono, monospace" }}
             >
-              INIT_SEQUENCE
-            </motion.button>
-            <div className="mt-3 flex flex-col gap-2 text-[11px] tracking-widest text-sky-muted">
-              <motion.span
-                whileHover={{ x: 2 }}
-                transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                onClick={() => setShowSettings(true)}
-                className="cursor-pointer hover:text-sky-text transition-colors flex items-center gap-2"
-              >
-                ⚙️ SETTINGS
-              </motion.span>
-              <motion.span
-                whileHover={{ x: 2 }}
-                transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                onClick={() => setShowHelp(true)}
-                className="cursor-pointer hover:text-sky-text transition-colors flex items-center gap-2"
-              >
-                ❓ HELP
-              </motion.span>
+              {error}
             </div>
-          </div>
-        </aside>
+          )}
+        </div>
 
-        {/* ── Dynamic Workspace ── */}
-        <AnimatePresence mode="wait">
-          {activeTab === "ROUTE_PLAN" && (
-            <motion.div
-              key="route"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="flex flex-1 overflow-hidden"
-            >
-              {/* Center Map Area */}
-              <section className="flex flex-col flex-1 p-3 bg-sky-bg gap-3 overflow-hidden">
-                <div
-                  className="flex-1 border border-sky-border rounded-lg overflow-hidden relative"
-                  style={{ minHeight: 0 }}
-                >
-                  <MapView
-                    airports={airports}
-                    graphEdges={graphEdges}
-                    nfzZones={nfzZones}
-                    activeRoute={currentPath as RouteResponse | null}
-                    selectedOrigin={selectedOrigin}
-                    selectedDest={selectedDest}
-                    onSelectAirport={handleSelectAirport}
-                    animationSteps={animationSteps}
-                    isAnimating={isAnimating}
-                    kShortestPaths={kPaths}
-                  />
+        {/* Workspace area */}
+        <div className="flex-1 overflow-hidden">
+          <AnimatePresence mode="wait">
+            {activeTab === "ROUTE_PLAN" && (
+              <motion.div
+                key="route"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="flex h-full overflow-hidden"
+              >
+                {/* Center Map Area */}
+                <section className="flex flex-col flex-1 p-3 gap-3 overflow-hidden">
+                  <div className="flex-1 glass-panel rounded-xl overflow-hidden relative" style={{ minHeight: 0 }}>
+                    <MapView
+                      airports={airports}
+                      graphEdges={graphEdges}
+                      nfzZones={nfzZones}
+                      activeRoute={currentPath as RouteResponse | null}
+                      selectedOrigin={selectedOrigin}
+                      selectedDest={selectedDest}
+                      onSelectAirport={handleSelectAirport}
+                      animationSteps={animationSteps}
+                      isAnimating={isAnimating}
+                      kShortestPaths={kPaths}
+                    />
 
-                  {/* Overlay info panel */}
-                  <div className="absolute top-3 left-3 border border-sky-border bg-sky-panel/90 p-3 text-[10px] tracking-widest z-[1000] rounded w-56 shadow-xl pointer-events-none backdrop-blur-sm">
-                    <div className="flex justify-between items-center mb-1.5">
-                      <span className="text-sky-muted">ACTIVE VECTOR</span>
-                      <span className="text-sky-cyan">v3.44.0</span>
+                    {/* Overlay info panel */}
+                    <div
+                      className="absolute top-3 left-3 glass-panel-solid rounded-xl p-3 z-[1000] w-52 pointer-events-none"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}
+                    >
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-outline text-xs">Network</span>
+                        <span className="text-secondary text-xs">v3.44</span>
+                      </div>
+                      <div className="h-px w-full mb-2" style={{ background: "rgba(255,255,255,0.06)" }} />
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-outline">Nodes</span>
+                        <span className="text-secondary">{airports.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs mt-1">
+                        <span className="text-outline">Algorithm</span>
+                        <span className="text-secondary">{selectedAlgo.toUpperCase()}</span>
+                      </div>
+                      {currentPath && (
+                        <div className="mt-2 pt-2 flex justify-between items-center text-xs" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                          <span className="text-outline">Explored</span>
+                          <span className="text-primary">{currentPath.nodesExplored} nodes</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="h-px w-full bg-sky-border mb-1.5" />
-                    <div className="flex justify-between items-center">
-                      <span className="text-sky-muted">NODES</span>
-                      <span className="text-sky-cyan">{airports.length}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sky-muted">ALGO</span>
-                      <span className="text-sky-cyan">{selectedAlgo.toUpperCase()}</span>
-                    </div>
-                    {currentPath && (
-                      <div className="flex justify-between items-center mt-1 pt-1 border-t border-sky-border">
-                        <span className="text-sky-muted">EXPLORED</span>
-                        <span className="text-sky-accent">{currentPath.nodesExplored} nodes</span>
+
+                    {/* K-shortest legend */}
+                    {kPaths.length > 1 && !isAnimating && (
+                      <div
+                        className="absolute bottom-3 left-3 glass-panel-solid rounded-xl p-2 z-[1000] pointer-events-none"
+                        style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "10px" }}
+                      >
+                        <span className="text-outline mb-1 block">K-Shortest Paths</span>
+                        {kPaths.map((kp, i) => (
+                          <div key={i} className="flex items-center gap-2 mt-0.5">
+                            <div
+                              className="w-4 h-0.5 rounded"
+                              style={{
+                                background: i === 0 ? "#d0bcff" : i === 1 ? "#4cd7f6" : "#c4c1fb",
+                                opacity: i === 0 ? 1 : 0.6,
+                              }}
+                            />
+                            <span style={{ color: i === 0 ? "#d0bcff" : "#958ea0" }}>
+                              {Math.round(kp.cost)} km
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
 
-                  {/* K-Shortest legend */}
-                  {kPaths.length > 1 && !isAnimating && (
-                    <div className="absolute bottom-3 left-3 border border-sky-border bg-sky-panel/90 p-2 text-[9px] tracking-widest z-[1000] rounded shadow-xl pointer-events-none backdrop-blur-sm flex flex-col gap-1">
-                      <span className="text-sky-muted">K-SHORTEST PATHS</span>
-                      {kPaths.map((kp, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <div
-                            className="w-4 h-0.5 rounded"
-                            style={{
-                              background:
-                                i === 0
-                                  ? "var(--sky-accent)"
-                                  : i === 1
-                                  ? "var(--sky-cyan)"
-                                  : "#F97316",
-                              opacity: i === 0 ? 1 : 0.5,
-                            }}
-                          />
-                          <span className={i === 0 ? "text-sky-accent" : "text-sky-muted"}>
-                            {Math.round(kp.cost)} km
-                          </span>
-                        </div>
-                      ))}
+                  {/* System Event Log */}
+                  <div className="h-36 glass-panel rounded-xl flex flex-col overflow-hidden shrink-0">
+                    <div className="flex items-center px-4 py-2 gap-3 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                      <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                      <span
+                        className="text-primary text-xs font-medium"
+                        style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
+                      >
+                        SYSTEM EVENT LOG
+                      </span>
+                      <span className="ml-auto text-outline text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                        UTF-8 · Sector 7G
+                      </span>
                     </div>
-                  )}
-                </div>
+                    <div className="flex-1 p-3 overflow-y-auto" style={{ background: "rgba(15,13,21,0.6)" }}>
+                      <ResultPanel
+                        currentPath={currentPath}
+                        isLoading={isLoading}
+                        isRecalculating={isRecalculating}
+                        logs={logs}
+                      />
+                    </div>
+                  </div>
+                </section>
 
-                {/* System Event Log */}
-                <div className="h-36 border border-sky-border bg-sky-panel rounded-lg flex flex-col overflow-hidden shrink-0">
-                  <div className="flex items-center px-4 py-1.5 border-b border-sky-border gap-3 text-[10px] shrink-0">
-                    <div className="w-1.5 h-1.5 rounded-full bg-sky-accent animate-pulse" />
-                    <span className="tracking-widest text-sky-accent font-bold border-b-2 border-sky-accent pb-0.5">
-                      SYSTEM_EVENT_LOG
-                    </span>
-                    <span className="ml-auto text-sky-muted tracking-widest">
-                      UTF-8 // SECTOR_7G
-                    </span>
-                  </div>
-                  <div className="flex-1 p-3 overflow-y-auto bg-sky-bg">
-                    <ResultPanel
-                      currentPath={currentPath}
-                      isLoading={isLoading}
-                      isRecalculating={isRecalculating}
-                      logs={logs}
-                    />
-                  </div>
-                </div>
-              </section>
+                {/* Right Control Panel */}
+                <aside
+                  className="w-[320px] glass-panel flex flex-col p-5 overflow-y-auto shrink-0"
+                  style={{ borderTop: "none", borderBottom: "none", borderRight: "none" }}
+                >
+                  <ControlPanel
+                    airports={airports}
+                    nfzZones={nfzZones}
+                    selectedOrigin={selectedOrigin}
+                    selectedDest={selectedDest}
+                    selectedAlgo={selectedAlgo}
+                    isLoading={isLoading}
+                    animateExploration={animateExploration}
+                    onSelectOrigin={setSelectedOrigin}
+                    onSelectDest={setSelectedDest}
+                    onSelectAlgo={setSelectedAlgo}
+                    onToggleNfz={handleToggleNfz}
+                    onFindRoute={handleFindRoute}
+                    onToggleAnimate={setAnimateExploration}
+                  />
+                </aside>
+              </motion.div>
+            )}
 
-              {/* Right Sidebar */}
-              <aside className="w-[320px] border-l border-sky-border bg-sky-panel flex flex-col p-5 overflow-y-auto shrink-0">
-                {error && (
-                  <div className="bg-red-950/30 border border-red-500/40 text-red-400 px-3 py-2 rounded text-[10px] tracking-widest mb-5 break-words">
-                    [ERROR] {error}
-                  </div>
-                )}
-                <ControlPanel
+            {activeTab === "FLEET_ALT" && (
+              <motion.div
+                key="fleet"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="flex flex-1 h-full overflow-hidden"
+              >
+                <TelemetryWorkspace
+                  currentPath={currentPath}
                   airports={airports}
+                  graphEdges={graphEdges}
                   nfzZones={nfzZones}
-                  selectedOrigin={selectedOrigin}
-                  selectedDest={selectedDest}
-                  selectedAlgo={selectedAlgo}
-                  isLoading={isLoading}
-                  animateExploration={animateExploration}
-                  onSelectOrigin={setSelectedOrigin}
-                  onSelectDest={setSelectedDest}
-                  onSelectAlgo={setSelectedAlgo}
-                  onToggleNfz={handleToggleNfz}
-                  onFindRoute={handleFindRoute}
-                  onToggleAnimate={setAnimateExploration}
                 />
-              </aside>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
 
-          {activeTab === "FLEET_ALT" && (
-            <motion.div
-              key="fleet"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="flex flex-1 overflow-hidden"
-            >
-              <TelemetryWorkspace
-                currentPath={currentPath}
-                airports={airports}
-                graphEdges={graphEdges}
-                nfzZones={nfzZones}
-              />
-            </motion.div>
-          )}
+            {activeTab === "SYS_STATUS" && (
+              <motion.div
+                key="sys"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="flex flex-1 h-full overflow-hidden"
+              >
+                <SysStatusWorkspace
+                  airports={airports}
+                  graphEdges={graphEdges}
+                  nfzZones={nfzZones}
+                  currentPath={currentPath}
+                />
+              </motion.div>
+            )}
 
-          {activeTab === "SYS_STATUS" && (
-            <motion.div
-              key="sys"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="flex flex-1 overflow-hidden"
-            >
-              <SysStatusWorkspace
-                airports={airports}
-                graphEdges={graphEdges}
-                nfzZones={nfzZones}
-                currentPath={currentPath}
-              />
-            </motion.div>
-          )}
-
-          {activeTab === "LOGS" && (
-            <motion.div
-              key="logs"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="flex flex-1 overflow-hidden"
-            >
-              <LogsWorkspace logs={logs} onClear={() => setLogs([])} />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            {activeTab === "LOGS" && (
+              <motion.div
+                key="logs"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="flex flex-1 h-full overflow-hidden"
+              >
+                <LogsWorkspace logs={logs} onClear={() => setLogs([])} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </main>
     </div>
   );
 }

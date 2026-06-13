@@ -2,39 +2,116 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Theme Variables ─────────────────────────────────────────────────────── */
+/* ── MD3 Theme Variables (dark-only, matching Stitch design) ─────────────── */
 :root {
-  --background: #f0eef5;
-  --foreground: #1a1820;
+  --background:               #15121b;
+  --foreground:               #e7e0ed;
+  --surface:                  #15121b;
+  --surface-container-low:    #1d1a23;
+  --surface-container:        #211e27;
+  --surface-container-high:   #2c2832;
+  --surface-container-highest:#37333d;
+  --on-surface:               #e7e0ed;
+  --on-surface-variant:       #cbc3d7;
+  --primary:                  #d0bcff;
+  --on-primary:               #3c0091;
+  --primary-container:        #a078ff;
+  --inverse-primary:          #6d3bd7;
+  --secondary:                #4cd7f6;
+  --on-secondary:             #003640;
+  --secondary-container:      #03b5d3;
+  --tertiary:                 #c4c1fb;
+  --tertiary-container:       #8e8bc2;
+  --outline:                  #958ea0;
+  --outline-variant:          #494454;
+  --error:                    #ffb4ab;
 
-  --sky-bg:      #f0eef5;
-  --sky-panel:   #ffffff;
-  --sky-surface: #f8f7fc;
-  --sky-border:  #e2dff0;
-  --sky-accent:  #9b23c8;
-  --sky-cyan:    #0891b2;
-  --sky-text:    #1a1820;
-  --sky-muted:   #6b7280;
+  /* Legacy sky-* aliases for backward compat with inline styles */
+  --sky-bg:      #15121b;
+  --sky-panel:   #1d1a23;
+  --sky-surface: #211e27;
+  --sky-border:  #494454;
+  --sky-accent:  #d0bcff;
+  --sky-cyan:    #4cd7f6;
+  --sky-text:    #e7e0ed;
+  --sky-muted:   #958ea0;
 }
 
 .dark {
-  --background: #0a090c;
-  --foreground: #e4e4e7;
-
-  --sky-bg:      #0a090c;
-  --sky-panel:   #1a1820;
-  --sky-surface: #110f15;
-  --sky-border:  #2d2a35;
-  --sky-accent:  #EBA5FA;
-  --sky-cyan:    #06b6d4;
-  --sky-text:    #e4e4e7;
-  --sky-muted:   #71717a;
+  --background:               #15121b;
+  --foreground:               #e7e0ed;
+  --sky-bg:      #15121b;
+  --sky-panel:   #1d1a23;
+  --sky-surface: #211e27;
+  --sky-border:  #494454;
+  --sky-accent:  #d0bcff;
+  --sky-cyan:    #4cd7f6;
+  --sky-text:    #e7e0ed;
+  --sky-muted:   #958ea0;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Glassmorphism Utilities ─────────────────────────────────────────────── */
+@layer components {
+  .glass-panel {
+    background: rgba(29, 26, 35, 0.4);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-panel-solid {
+    background: rgba(29, 26, 35, 0.85);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glass-glow {
+    box-shadow:
+      0 0 0 1px rgba(208, 188, 255, 0.1),
+      0 4px 24px rgba(208, 188, 255, 0.08);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #d0bcff 0%, #4cd7f6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-grid-pattern {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .orb-purple {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgba(109, 59, 215, 0.15) 0%, transparent 70%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
+
+  .orb-cyan {
+    position: absolute;
+    width: 500px;
+    height: 500px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgba(76, 215, 246, 0.1) 0%, transparent 70%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
 }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */
@@ -72,45 +149,58 @@ body {
   to { stroke-dashoffset: -20; }
 }
 
-/* Airplane trail shimmer */
+/* Airplane trail shimmer (updated to MD3 primary) */
 @keyframes plane-glow {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(235,165,250,0.6)); }
-  50%       { filter: drop-shadow(0 0 10px rgba(235,165,250,1)); }
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(208, 188, 255, 0.6)); }
+  50%       { filter: drop-shadow(0 0 10px rgba(208, 188, 255, 1)); }
+}
+
+/* Waypoint pulse */
+@keyframes waypoint-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(76, 215, 246, 0.4);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 8px rgba(76, 215, 246, 0);
+  }
+}
+
+/* Route path dash animation */
+@keyframes route-dash {
+  from { stroke-dashoffset: 200; }
+  to   { stroke-dashoffset: 0; }
 }
 
 /* ── Leaflet Custom Styles ───────────────────────────────────────────────── */
-
-/* Reset default Leaflet icon container */
 .airport-custom-icon {
   background: transparent !important;
   border: none !important;
 }
 
-/* Algorithm animation markers */
 .frontier-node {
   animation: frontier-pulse 0.9s ease-in-out infinite;
 }
 
-/* Route arc glow effect */
 .route-arc path {
-  filter: drop-shadow(0 0 3px rgba(235, 165, 250, 0.7));
+  filter: drop-shadow(0 0 3px rgba(208, 188, 255, 0.7));
 }
 
 .route-arc-recalc path {
-  filter: drop-shadow(0 0 3px rgba(249, 115, 22, 0.7));
+  filter: drop-shadow(0 0 3px rgba(76, 215, 246, 0.7));
 }
 
-/* Distance label chips */
 .distance-label-icon {
   background: transparent !important;
   border: none !important;
 }
 
 .distance-chip {
-  background: rgba(26, 24, 32, 0.85);
-  border: 1px solid rgba(45, 42, 53, 0.8);
-  color: #71717a;
-  font-family: monospace;
+  background: rgba(29, 26, 35, 0.85);
+  border: 1px solid rgba(73, 68, 84, 0.8);
+  color: #958ea0;
+  font-family: "JetBrains Mono", monospace;
   font-size: 8px;
   padding: 2px 5px;
   border-radius: 3px;
@@ -119,24 +209,21 @@ body {
   backdrop-filter: blur(4px);
 }
 
-.light .distance-chip {
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(226, 223, 240, 0.9);
-  color: #6b7280;
-}
-
-/* K-shortest alternate arcs */
 .route-alt-1 path {
-  filter: drop-shadow(0 0 2px rgba(6, 182, 212, 0.4));
+  filter: drop-shadow(0 0 2px rgba(76, 215, 246, 0.4));
 }
 
 .route-alt-2 path {
-  filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.4));
+  filter: drop-shadow(0 0 2px rgba(196, 193, 251, 0.4));
 }
 
-/* Airplane marker */
 .airplane-icon {
   background: transparent !important;
   border: none !important;
   animation: plane-glow 2s ease-in-out infinite;
+}
+
+/* Material Symbols Outlined */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
 }

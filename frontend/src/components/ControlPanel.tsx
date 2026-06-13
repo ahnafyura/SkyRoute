@@ -47,19 +47,24 @@ export default function ControlPanel({
     !isLoading;
 
   const selectCls =
-    "w-full bg-sky-bg border border-sky-border rounded px-3 py-2.5 appearance-none focus:outline-none focus:border-sky-cyan text-sky-text text-[11px] font-mono tracking-wider";
+    "w-full border rounded-lg px-3 py-2.5 appearance-none focus:outline-none text-xs font-mono tracking-wider transition-colors"
+    + " focus:border-secondary"
+    + " bg-surface-container-high border-outline-variant text-on-surface";
 
   return (
-    <div className="flex flex-col gap-5 text-[11px] tracking-widest text-sky-muted h-full font-mono">
-      <div className="text-sky-accent font-bold border-b border-sky-border pb-2">
+    <div className="flex flex-col gap-5 text-xs tracking-widest text-outline h-full font-mono">
+      <div
+        className="text-primary font-semibold pb-2"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.08em" }}
+      >
         FLIGHT PARAMETERS
       </div>
 
       {/* ── Airport Selectors ── */}
       <div className="flex flex-col gap-3">
         <div>
-          <label className="block text-[10px] text-sky-muted mb-1.5">
-            DEPARTURE POINT
+          <label className="block text-[10px] text-outline mb-1.5" style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.08em" }}>
+            DEPARTURE
           </label>
           <div className="relative">
             <select
@@ -84,8 +89,8 @@ export default function ControlPanel({
         </div>
 
         <div>
-          <label className="block text-[10px] text-sky-muted mb-1.5">
-            ARRIVAL DESTINATION
+          <label className="block text-[10px] text-outline mb-1.5" style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.08em" }}>
+            DESTINATION
           </label>
           <div className="relative">
             <select
@@ -111,25 +116,31 @@ export default function ControlPanel({
 
       {/* ── Algorithm Toggle ── */}
       <div>
-        <div className="flex justify-between items-end border-b border-sky-border pb-1.5 mb-3">
-          <div className="text-sky-accent font-bold">ALGORITHM</div>
-          <div className="text-[9px] text-sky-muted">PATHFINDING</div>
+        <div className="flex justify-between items-end pb-1.5 mb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="text-primary font-semibold text-[11px] tracking-widest" style={{ fontFamily: "JetBrains Mono, monospace" }}>ALGORITHM</div>
+          <div className="text-[9px] text-outline">PATHFINDING</div>
         </div>
-        <div className="bg-sky-bg border border-sky-border rounded p-0.5 flex gap-0.5">
+        <div
+          className="glass-panel rounded-xl p-0.5 flex gap-0.5"
+        >
           {ALGO_OPTIONS.map(({ value, label, desc }) => (
             <motion.button
               key={value}
               type="button"
               whileTap={{ scale: 0.97 }}
               onClick={() => onSelectAlgo(value)}
-              className={`flex-1 py-2 text-center rounded transition-colors text-[9px] leading-tight ${
-                selectedAlgo === value
-                  ? "bg-sky-surface text-sky-text border border-sky-border"
-                  : "text-sky-muted hover:text-sky-text"
-              }`}
+              className="flex-1 py-2 text-center rounded-lg transition-all text-[9px] leading-tight"
+              style={selectedAlgo === value ? {
+                background: "rgba(208,188,255,0.15)",
+                color: "#d0bcff",
+                border: "1px solid rgba(208,188,255,0.2)",
+              } : {
+                color: "#958ea0",
+                border: "1px solid transparent",
+              }}
               title={desc}
             >
-              <div>{label}</div>
+              <div style={{ fontFamily: "JetBrains Mono, monospace" }}>{label}</div>
               <div className="text-[8px] opacity-50 mt-0.5">{desc}</div>
             </motion.button>
           ))}
@@ -138,8 +149,8 @@ export default function ControlPanel({
 
       {/* ── Options ── */}
       <div>
-        <div className="flex justify-between items-end border-b border-sky-border pb-1.5 mb-3">
-          <div className="text-sky-accent font-bold">OPTIONS</div>
+        <div className="flex justify-between items-end pb-1.5 mb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="text-primary font-semibold text-[11px] tracking-widest" style={{ fontFamily: "JetBrains Mono, monospace" }}>OPTIONS</div>
         </div>
         <motion.label
           whileHover={{ x: 2 }}
@@ -148,9 +159,8 @@ export default function ControlPanel({
         >
           <div
             onClick={() => onToggleAnimate(!animateExploration)}
-            className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer ${
-              animateExploration ? "bg-sky-accent" : "bg-sky-border"
-            }`}
+            className="w-8 h-4 rounded-full transition-all relative cursor-pointer"
+            style={{ background: animateExploration ? "#d0bcff" : "rgba(255,255,255,0.1)" }}
           >
             <div
               className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform shadow-sm ${
@@ -158,15 +168,15 @@ export default function ControlPanel({
               }`}
             />
           </div>
-          <span className="text-sky-muted text-[10px]">ANIMATE EXPLORATION</span>
+          <span className="text-outline text-[10px]" style={{ fontFamily: "Inter, sans-serif" }}>Animasi Eksplorasi</span>
         </motion.label>
       </div>
 
       {/* ── NFZ Sub-Systems ── */}
       <div>
-        <div className="flex justify-between items-end border-b border-sky-border pb-1.5 mb-3">
-          <div className="text-sky-accent font-bold">SUB-SYSTEMS (NFZ)</div>
-          <div className="text-[9px] text-sky-muted">RESTRICTED</div>
+        <div className="flex justify-between items-end pb-1.5 mb-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="text-primary font-semibold text-[11px] tracking-widest" style={{ fontFamily: "JetBrains Mono, monospace" }}>NFZ ZONES</div>
+          <div className="text-[9px] text-outline">RESTRICTED</div>
         </div>
         <div className="grid grid-cols-2 gap-2">
           {nfzZones.length === 0 && (
@@ -179,11 +189,16 @@ export default function ControlPanel({
               key={zone.id}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              className={`flex flex-col items-center justify-center p-2.5 border rounded cursor-pointer transition-colors ${
-                zone.active
-                  ? "border-sky-accent bg-sky-accent/10 text-sky-accent"
-                  : "border-sky-border bg-sky-bg text-sky-muted hover:border-sky-muted"
-              }`}
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl cursor-pointer transition-all"
+              style={zone.active ? {
+                border: "1px solid rgba(208,188,255,0.3)",
+                background: "rgba(208,188,255,0.1)",
+                color: "#d0bcff",
+              } : {
+                border: "1px solid rgba(255,255,255,0.06)",
+                background: "rgba(255,255,255,0.02)",
+                color: "#958ea0",
+              }}
             >
               <input
                 type="checkbox"
@@ -219,9 +234,20 @@ export default function ControlPanel({
           disabled={!canSearch}
           onClick={onFindRoute}
           whileTap={canSearch ? { scale: 0.97 } : {}}
-          className="w-full py-2.5 bg-transparent border border-sky-muted text-sky-text font-bold rounded tracking-widest hover:border-sky-accent hover:text-sky-accent disabled:opacity-40 disabled:border-sky-border disabled:text-sky-muted disabled:cursor-not-allowed transition-all text-[11px]"
+          className="w-full py-3 font-bold rounded-xl tracking-wider disabled:opacity-40 disabled:cursor-not-allowed transition-all text-sm"
+          style={canSearch ? {
+            background: "linear-gradient(135deg, #d0bcff 0%, #6d3bd7 100%)",
+            color: "#3c0091",
+            boxShadow: "0 0 20px rgba(208,188,255,0.25)",
+            fontFamily: "Inter, sans-serif",
+          } : {
+            background: "rgba(255,255,255,0.05)",
+            color: "#958ea0",
+            border: "1px solid rgba(255,255,255,0.06)",
+            fontFamily: "Inter, sans-serif",
+          }}
         >
-          {isLoading ? "CALCULATING_VECTOR..." : "RECALCULATE_VECTOR"}
+          {isLoading ? "Menghitung Rute..." : "Hitung Rute Optimal"}
         </motion.button>
       </div>
     </div>

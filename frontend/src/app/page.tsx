@@ -1,104 +1,304 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import ThemeToggle from "@/components/ThemeToggle";
 
+// ─── WebGL Shader Background ──────────────────────────────────────────────────
+function ShaderCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    function syncSize() {
+      if (!canvas) return;
+      const w = canvas.clientWidth || 1280;
+      const h = canvas.clientHeight || 720;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    }
+
+    const ro = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(syncSize)
+      : null;
+    ro?.observe(canvas);
+    syncSize();
+
+    const gl =
+      canvas.getContext("webgl") ||
+      (canvas.getContext as (id: string) => WebGLRenderingContext | null)("experimental-webgl");
+    if (!gl) return;
+
+    const vs = `attribute vec2 a_position;
+varying vec2 v_texCoord;
+void main(){v_texCoord=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}`;
+
+    const fs = `precision highp float;
+uniform float u_time;uniform vec2 u_resolution;varying vec2 v_texCoord;
+float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+float noise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}
+void main(){
+  vec2 uv=v_texCoord;vec2 p=uv*3.0;float n=noise(p+u_time*0.1);
+  vec3 c1=vec3(0.08,0.07,0.11);vec3 c2=vec3(0.55,0.36,0.96);vec3 c3=vec3(0.13,0.77,0.88);
+  float mask=smoothstep(0.4,0.6,n);
+  vec3 col=mix(c1,c2,mask*0.15);
+  col+=c3*(1.0-smoothstep(0.0,0.1,abs(n-0.5)))*0.05;
+  gl_FragColor=vec4(col,1.0);
+}`;
+
+    function cs(type: number, src: string) {
+      const s = gl!.createShader(type)!;
+      gl!.shaderSource(s, src);
+      gl!.compileShader(s);
+      return s;
+    }
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, cs(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, cs(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+    const pos = gl.getAttribLocation(prog, "a_position");
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+    const uTime = gl.getUniformLocation(prog, "u_time");
+    const uRes  = gl.getUniformLocation(prog, "u_resolution");
+
+    let raf: number;
+    function render(t: number) {
+      if (!gl) return;
+      if (typeof ResizeObserver === "undefined") syncSize();
+      gl.viewport(0, 0, canvas!.width, canvas!.height);
+      if (uTime) gl.uniform1f(uTime, t * 0.001);
+      if (uRes)  gl.uniform2f(uRes, canvas!.width, canvas!.height);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      raf = requestAnimationFrame(render);
+    }
+    raf = requestAnimationFrame(render);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="fixed inset-0 w-full h-full opacity-50"
+      style={{ zIndex: 0, display: "block" }}
+    />
+  );
+}
+
+// ─── Three.js Globe ───────────────────────────────────────────────────────────
+function GlobeCanvas() {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let animId: number;
+    let THREE: typeof import("three");
+
+    import("three").then((mod) => {
+      THREE = mod;
+      const w = container.clientWidth || 400;
+      const h = container.clientHeight || 400;
+
+      const scene    = new THREE.Scene();
+      const camera   = new THREE.PerspectiveCamera(75, w / h, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer.setSize(w, h);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      container.appendChild(renderer.domElement);
+
+      // Wireframe icosahedron globe
+      const geo  = new THREE.IcosahedronGeometry(2, 2);
+      const mat  = new THREE.MeshPhongMaterial({
+        color: 0x8b5cf6, wireframe: true,
+        transparent: true, opacity: 0.55,
+        emissive: new THREE.Color(0x8b5cf6), emissiveIntensity: 0.4,
+      });
+      const globe = new THREE.Mesh(geo, mat);
+      scene.add(globe);
+
+      // Glowing inner core
+      const coreGeo = new THREE.SphereGeometry(1.2, 32, 32);
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.15 });
+      scene.add(new THREE.Mesh(coreGeo, coreMat));
+
+      // City dots
+      [
+        [1, 0.5, 1.5], [-1, -0.8, 1.2], [0.5, 1.2, -1], [-1.5, 0.2, -0.5],
+      ].forEach(([x, y, z]) => {
+        const dot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.05, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffffff })
+        );
+        dot.position.set(x, y, z);
+        globe.add(dot);
+      });
+
+      const light = new THREE.PointLight(0xffffff, 1, 100);
+      light.position.set(5, 5, 5);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404040));
+      camera.position.z = 5;
+
+      function animate() {
+        animId = requestAnimationFrame(animate);
+        globe.rotation.y += 0.004;
+        globe.rotation.x += 0.001;
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      const onResize = () => {
+        const nw = container.clientWidth;
+        const nh = container.clientHeight;
+        camera.aspect = nw / nh;
+        camera.updateProjectionMatrix();
+        renderer.setSize(nw, nh);
+      };
+      window.addEventListener("resize", onResize);
+
+      // cleanup stored on the div for the return fn
+      (container as HTMLDivElement & { _cleanup?: () => void })._cleanup = () => {
+        cancelAnimationFrame(animId);
+        window.removeEventListener("resize", onResize);
+        renderer.dispose();
+        if (container.contains(renderer.domElement)) {
+          container.removeChild(renderer.domElement);
+        }
+      };
+    });
+
+    return () => {
+      (container as HTMLDivElement & { _cleanup?: () => void })._cleanup?.();
+    };
+  }, []);
+
+  return <div ref={containerRef} className="w-full h-full" />;
+}
+
+// ─── Feature Cards ────────────────────────────────────────────────────────────
 const features = [
   {
-    serial: "SN: MAP-08X-VX",
-    title: "STRATEGIC MAPPING",
+    icon: "map",
+    title: "Strategic Mapping",
     desc: "Multi-layered geospatial overlays with great-circle arc routing and airline-grade cartographic precision.",
-    borderHover: "hover:border-sky-accent/50",
-    iconColor: "text-sky-accent",
-    iconBorder: "border-sky-accent/30",
-    iconBg: "bg-sky-accent/10",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
+    accent: "primary",
   },
   {
-    serial: "SN: OPT-332-ZZ",
-    title: "VECTOR OPTIMIZATION",
-    desc: "Dijkstra, A*, and Bidirectional Dijkstra with Yen's K-Shortest Paths — all computed in-browser with step visualization.",
-    borderHover: "hover:border-sky-cyan/50",
-    iconColor: "text-sky-cyan",
-    iconBorder: "border-sky-cyan/30",
-    iconBg: "bg-sky-cyan/10",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-      </svg>
-    ),
+    icon: "route",
+    title: "Vector Optimization",
+    desc: "Dijkstra, A*, and Bidirectional Dijkstra with Yen's K-Shortest Paths — computed via FastAPI Python backend.",
+    accent: "secondary",
   },
   {
-    serial: "SN: TEL-774-K1",
-    title: "FLEET TELEMETRY",
-    desc: "High-bandwidth data stream processing with animated aircraft traversal along calculated routes.",
-    borderHover: "hover:border-sky-accent/50",
-    iconColor: "text-sky-accent",
-    iconBorder: "border-sky-accent/30",
-    iconBg: "bg-sky-accent/10",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-      </svg>
-    ),
+    icon: "flight",
+    title: "Fleet Telemetry",
+    desc: "High-bandwidth data stream with animated aircraft traversal along calculated routes and NFZ constraints.",
+    accent: "tertiary",
   },
 ];
 
+// ─── Landing Page ─────────────────────────────────────────────────────────────
 export default function LandingPage() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-sky-bg text-sky-muted font-mono relative overflow-hidden flex flex-col">
-      {/* Background gradient */}
-      <div className="absolute inset-0 pointer-events-none z-0 flex items-center justify-center opacity-30">
-        <div className="w-[800px] h-[800px] bg-gradient-to-b from-sky-panel to-transparent rounded-full blur-3xl" />
+    <div
+      className="min-h-screen text-on-surface relative overflow-hidden flex flex-col"
+      style={{ background: "#15121b" }}
+    >
+      {/* WebGL Shader background */}
+      <ShaderCanvas />
+
+      {/* Background orbs */}
+      <div
+        className="fixed pointer-events-none"
+        style={{ top: "-100px", left: "-100px", zIndex: 1 }}
+      >
+        <div className="orb-purple" />
+      </div>
+      <div
+        className="fixed pointer-events-none"
+        style={{ bottom: "-100px", right: "-100px", zIndex: 1 }}
+      >
+        <div className="orb-cyan" />
       </div>
 
       {/* ── Navigation ── */}
-      <header className="relative z-10 flex items-center justify-between px-8 py-5">
+      <header
+        className="relative flex items-center justify-between px-8 py-4 glass-panel"
+        style={{ zIndex: 20, borderLeft: "none", borderRight: "none", borderTop: "none" }}
+      >
         <div className="flex items-center gap-2">
-          <span className="text-2xl font-black tracking-tighter text-sky-accent drop-shadow-[0_0_8px_rgba(235,165,250,0.4)]">
-            Aero<span className="text-sky-text">Optix</span>
+          <span className="material-symbols-outlined text-primary" style={{ fontSize: "24px" }}>
+            flight_takeoff
+          </span>
+          <span
+            className="text-xl font-bold tracking-tight text-gradient"
+            style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}
+          >
+            SkyRoute
           </span>
         </div>
 
-        <nav className="hidden md:flex items-center gap-8 text-[10px] tracking-[0.2em] font-semibold text-sky-muted">
-          <span className="text-sky-text border-b-2 border-sky-text pb-1 cursor-pointer">MAP</span>
-          <span onClick={() => router.push("/dashboard?tab=ROUTE_PLAN")} className="hover:text-sky-text cursor-pointer transition-colors">ROUTE</span>
-          <span onClick={() => router.push("/dashboard?tab=FLEET_ALT")} className="hover:text-sky-text cursor-pointer transition-colors">FLEET</span>
-          <span className="hover:text-sky-text cursor-pointer transition-colors">TERMINAL</span>
+        <nav className="hidden md:flex items-center gap-6">
+          {["Map", "Route", "Fleet", "Terminal"].map((item, i) => (
+            <button
+              key={item}
+              onClick={() => {
+                if (i === 1) router.push("/dashboard?tab=ROUTE_PLAN");
+                else if (i === 2) router.push("/dashboard?tab=FLEET_ALT");
+              }}
+              className="text-sm font-medium transition-colors hover:text-primary"
+              style={{ color: i === 0 ? "#d0bcff" : "#958ea0", fontFamily: "Inter, sans-serif" }}
+            >
+              {item}
+            </button>
+          ))}
         </nav>
 
-        <div className="flex items-center gap-3">
-          <ThemeToggle />
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={() => router.push("/dashboard")}
-            className="hidden md:block px-5 py-2 bg-sky-accent text-white text-[10px] font-bold tracking-widest rounded transition-opacity hover:opacity-90"
-          >
-            LAUNCH SYSTEM
-          </motion.button>
-        </div>
+        <motion.button
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={() => router.push("/dashboard")}
+          className="px-5 py-2.5 rounded-full text-sm font-semibold text-on-primary transition-all"
+          style={{
+            background: "linear-gradient(135deg, #d0bcff 0%, #6d3bd7 100%)",
+            fontFamily: "Inter, sans-serif",
+          }}
+        >
+          Launch System
+        </motion.button>
       </header>
 
       {/* ── Hero ── */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 mt-8 md:mt-16">
+      <main className="relative flex-1 flex flex-col items-center justify-center px-6 py-16" style={{ zIndex: 10 }}>
         {/* Status pill */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
-          className="border border-sky-border bg-sky-panel/60 rounded-full px-4 py-1.5 mb-7 flex items-center gap-2 backdrop-blur-sm"
+          transition={{ duration: 0.6 }}
+          className="glass-panel rounded-full px-4 py-2 mb-8 flex items-center gap-2"
         >
-          <span className="text-[9px] tracking-widest text-sky-muted">
-            STATUS: <span className="text-sky-text">SYSTEM NOMINAL</span>{" // TERMINAL "}
-            <span className="text-sky-text">ALPHA-9</span>
+          <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+          <span
+            className="text-xs text-on-surface-variant"
+            style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.05em" }}
+          >
+            System Nominal — Alpha 9 Online
           </span>
         </motion.div>
 
@@ -107,9 +307,12 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-          className="text-6xl md:text-8xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-sky-text via-sky-cyan to-sky-accent drop-shadow-[0_0_20px_rgba(6,182,212,0.3)] text-center mb-7"
+          className="text-display-lg text-gradient text-center mb-6"
+          style={{ fontFamily: "var(--font-sora), Sora, sans-serif" }}
         >
-          AEROOPTIX
+          Navigasi Masa
+          <br />
+          Depan Aviasi
         </motion.h1>
 
         {/* Sub-headline */}
@@ -117,10 +320,11 @@ export default function LandingPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.8, delay: 0.3 }}
-          className="max-w-2xl text-center text-sm text-sky-muted leading-relaxed mb-10"
+          className="max-w-xl text-center text-body-lg text-on-surface-variant mb-10"
+          style={{ fontFamily: "Inter, sans-serif" }}
         >
-          Precision flight route optimization powered by Dijkstra, A*, and Bidirectional
-          search algorithms on real Indonesian airport networks with No-Fly Zone constraints.
+          Optimisasi rute penerbangan berbasis Dijkstra, A*, dan Bidirectional search
+          pada jaringan bandara Indonesia — dengan dukungan No-Fly Zone real-time.
         </motion.p>
 
         {/* CTA buttons */}
@@ -128,107 +332,112 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.5 }}
-          className="flex flex-col sm:flex-row items-center gap-4"
+          className="flex flex-col sm:flex-row items-center gap-4 mb-20"
         >
           <motion.button
             whileHover={{ scale: 1.04 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => router.push("/dashboard")}
-            className="px-8 py-4 bg-sky-accent text-white text-sm font-bold tracking-widest rounded transition-all hover:shadow-[0_0_25px_rgba(235,165,250,0.4)]"
+            className="px-8 py-4 rounded-full text-base font-semibold text-on-primary transition-all"
+            style={{
+              background: "linear-gradient(135deg, #d0bcff 0%, #6d3bd7 100%)",
+              boxShadow: "0 0 30px rgba(208, 188, 255, 0.3)",
+              fontFamily: "Inter, sans-serif",
+            }}
           >
-            ENTER SYSTEM
+            Buka Dashboard
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => router.push("/dashboard?tab=ROUTE_PLAN")}
-            className="px-8 py-4 border border-sky-border hover:border-sky-muted bg-transparent text-sky-text text-sm font-bold tracking-widest rounded transition-all hover:bg-sky-panel/50"
+            className="px-8 py-4 rounded-full text-base font-semibold text-on-surface glass-panel transition-all"
+            style={{ fontFamily: "Inter, sans-serif" }}
           >
-            VIEW MAP
+            Lihat Peta Rute
           </motion.button>
         </motion.div>
 
-        {/* ── Feature Grid ── */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-20 max-w-5xl w-full">
-          {features.map((f, i) => (
-            <motion.div
-              key={f.title}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.1 }}
-              className={`border border-sky-border bg-sky-panel/80 backdrop-blur rounded-xl p-6 relative overflow-hidden group ${f.borderHover} transition-colors`}
-            >
-              <div className="absolute top-4 right-4 text-[8px] text-sky-muted/60 tracking-widest">
-                {f.serial}
-              </div>
-              <div
-                className={`w-9 h-9 rounded border ${f.iconBorder} ${f.iconBg} flex items-center justify-center ${f.iconColor} mb-5`}
+        {/* ── Feature Cards + Globe ── */}
+        <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-6 items-start">
+          {/* Cards */}
+          <div className="flex-1 grid grid-cols-1 gap-4">
+            {features.map((f, i) => (
+              <motion.div
+                key={f.title}
+                initial={{ opacity: 0, x: -20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: i * 0.1 }}
+                className="glass-panel rounded-xl p-6 flex gap-4 items-start"
               >
-                {f.icon}
-              </div>
-              <h3 className="text-lg font-bold text-sky-text tracking-wider mb-3">
-                {f.title}
-              </h3>
-              <p className="text-[11px] text-sky-muted leading-relaxed">{f.desc}</p>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* ── Globe Visualization Area ── */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 1 }}
-          className="mt-10 w-full max-w-5xl border border-sky-border bg-sky-panel rounded-xl overflow-hidden relative h-56 md:h-80 flex items-center justify-center mb-10"
-        >
-          <div className="absolute top-4 left-4 flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-sky-cyan animate-pulse" />
-            <span className="text-[9px] text-sky-muted tracking-widest">
-              LIVE FEED // INDONESIAN AIRSPACE
-            </span>
-          </div>
-
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-56 h-56 md:w-80 md:h-80 border border-sky-border/40 rounded-full opacity-40 relative flex items-center justify-center animate-[spin_60s_linear_infinite]">
-              <div className="absolute inset-0 border border-sky-cyan/20 rounded-full scale-[0.80]" />
-              <div className="absolute inset-0 border border-sky-cyan/10 rounded-full scale-[0.60]" />
-              <div className="absolute inset-0 border border-sky-cyan/5 rounded-full scale-[0.40]" />
-              <div className="absolute w-full h-[1px] bg-sky-cyan/10 top-1/2" />
-              <div className="absolute h-full w-[1px] bg-sky-cyan/10 left-1/2" />
-            </div>
-          </div>
-
-          <div className="absolute top-4 right-4 flex gap-3">
-            {[["WIND SPEED", "42 KTS"], ["VISIBILITY", "MAX"]].map(([k, v]) => (
-              <div key={k} className="border border-sky-border bg-sky-bg px-3 py-1 text-center">
-                <div className="text-[7px] text-sky-muted tracking-widest">{k}</div>
-                <div className="text-[11px] text-sky-text font-bold">{v}</div>
-              </div>
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    background: f.accent === "secondary"
+                      ? "rgba(76,215,246,0.12)"
+                      : f.accent === "tertiary"
+                      ? "rgba(196,193,251,0.12)"
+                      : "rgba(208,188,255,0.12)",
+                  }}
+                >
+                  <span
+                    className="material-symbols-outlined text-lg"
+                    style={{
+                      color: f.accent === "secondary" ? "#4cd7f6" : f.accent === "tertiary" ? "#c4c1fb" : "#d0bcff",
+                      fontSize: "20px",
+                    }}
+                  >
+                    {f.icon}
+                  </span>
+                </div>
+                <div>
+                  <h3
+                    className="text-headline-md text-on-surface mb-1"
+                    style={{ fontFamily: "var(--font-sora), Sora, sans-serif", fontSize: "16px", lineHeight: "24px" }}
+                  >
+                    {f.title}
+                  </h3>
+                  <p
+                    className="text-body-md text-on-surface-variant"
+                    style={{ fontFamily: "Inter, sans-serif", fontSize: "14px" }}
+                  >
+                    {f.desc}
+                  </p>
+                </div>
+              </motion.div>
             ))}
           </div>
 
-          <div className="absolute bottom-4 left-4 text-[9px] text-sky-muted tracking-widest">
-            COMPUTING NEXT VECTOR... [99%]
-          </div>
-          <div className="absolute bottom-4 right-4 w-24 h-1 bg-sky-border rounded">
-            <div className="w-[99%] h-full bg-sky-accent rounded" />
-          </div>
-        </motion.div>
+          {/* Globe */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8 }}
+            className="w-full lg:w-80 h-80 glass-panel rounded-2xl overflow-hidden flex items-center justify-center shrink-0"
+          >
+            <GlobeCanvas />
+          </motion.div>
+        </div>
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-sky-border py-5 px-8 flex flex-col md:flex-row justify-between items-center bg-sky-panel z-10 text-[9px] text-sky-muted tracking-widest gap-3">
-        <div>AEROOPTIX // STRATEGIC FLIGHT INTEL</div>
-        <div className="flex gap-5">
-          {["Security", "API", "Uptime", "Support"].map((l) => (
-            <span key={l} className="hover:text-sky-text cursor-pointer transition-colors">{l}</span>
-          ))}
-        </div>
+      <footer
+        className="glass-panel px-8 py-5 flex flex-col md:flex-row justify-between items-center gap-3"
+        style={{ zIndex: 20, borderLeft: "none", borderRight: "none", borderBottom: "none" }}
+      >
+        <span
+          className="text-on-surface-variant text-sm"
+          style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", letterSpacing: "0.05em" }}
+        >
+          SkyRoute Analytics — Strategic Flight Intelligence
+        </span>
         <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-          SYSTEM ONLINE <span className="text-sky-muted/50 ml-1">0.02s</span>
+          <div className="w-1.5 h-1.5 rounded-full bg-secondary" />
+          <span className="text-secondary text-xs" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+            System Online
+          </span>
         </div>
       </footer>
     </div>
